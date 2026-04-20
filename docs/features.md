@@ -9,7 +9,7 @@
 | 工程骨架 | 已实现 | Spring Boot 3、Java 21、Maven 3.9+ 多模块、Maven Enforcer、JDK 虚拟线程执行器、基础日志、可打包 app jar | 按需补 CI / profile |
 | WebSocket 接入 | 已实现 | `/ws/agent` 支持策略注册表驱动的 JSON 控制消息、文本输入、自定义 type 和二进制 PCM | 增加端到端 WebSocket 自动化测试 |
 | Session 与 turnId | 已实现 | 每连接独立 session，维护 current turn 和旧 turn 失效集合 | 丰富并发与断连测试 |
-| 音频基础设施 | 已实现 | PCM s16le 转换、RMS、ring buffer、pre-roll、时长换算 | 增加异常格式校验策略 |
+| 音频基础设施 | 已实现 | PCM s16le 转换、RMS、ring buffer、pre-roll、时长换算，音频格式从 `kong-voice-agent.audio` 绑定到 `AudioFormatSpec` | 增加异常格式校验策略 |
 | VAD | 已实现 | Silero ONNX 加载入口，默认从项目 `models/` 读取，模型缺失时 RMS fallback | 放入真实模型并确认输入签名 |
 | Streaming ASR | 已实现 | 每 session ASR 工厂，app 默认 mock adapter 支持 partial / final | 接入真实流式 ASR |
 | TurnManager / endpointing | 已实现 | 根据 VAD、ASR、时间信息推进状态并 commit turn | 扩展真实噪声场景测试 |
@@ -85,14 +85,16 @@
 
 ### 4. 音频基础设施
 
-- 固定输入格式：16kHz / mono / 16-bit PCM little-endian。
-- 默认上传块：20ms。
+- 默认输入格式：16kHz / mono / 16-bit PCM little-endian。
+- 音频格式运行时从 `kong-voice-agent.audio` 读取，默认上传块为 20ms。
+- 服务端暂不做 WebSocket 音频格式协商，客户端实际发送格式必须与服务端配置保持一致。
 - `PcmUtils` 支持 byte[] 到 short[]、RMS、毫秒换算、拼接、裁剪。
 - `CircularByteBuffer` 支持保留最新 PCM 数据。
 - `PreRollBuffer` 保留最近约 400ms 音频。
 
 验收点：
 
+- `AudioFormatSpec` 可从配置文件绑定，并在新 session 创建时传入每会话 ASR 工厂。
 - ring buffer 可写可读，并在超容量时保留最新数据。
 - pre-roll 能保留最近 300 到 500ms 音频。
 - PCM little-endian 转换正确。

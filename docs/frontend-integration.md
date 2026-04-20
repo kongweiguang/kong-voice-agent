@@ -9,8 +9,8 @@
 | WebSocket 地址 | `ws://localhost:9877/ws/agent` |
 | JSON 消息方向 | 客户端到服务端、服务端到客户端 |
 | 音频消息方向 | 客户端以 WebSocket 二进制帧发送 PCM |
-| 音频格式 | 16kHz / mono / 16-bit PCM little-endian |
-| 推荐音频分片 | 20ms，约 640 bytes |
+| 音频格式 | 默认 16kHz / mono / 16-bit PCM little-endian，需与服务端 `kong-voice-agent.audio` 配置一致 |
+| 推荐音频分片 | 默认 20ms，约 640 bytes |
 | 文本入口 | `{"type":"text","payload":{"text":"..."}}` |
 
 服务端以每个 WebSocket 连接创建一个独立 session。前端无需在上行消息里传 `sessionId`，但必须在下行消息里按 `sessionId` 和 `turnId` 维护显示、播放和过期消息丢弃逻辑。JSON 上行消息按字符串 `type` 进入服务端策略注册表，内置支持 `ping`、`interrupt`、`audio_end` 和 `text`；业务后端可以新增自定义 type，但不能覆盖这些内置 type。
@@ -103,7 +103,7 @@ python -m http.server 5173
 
 ### PCM 二进制帧
 
-麦克风输入需要转换为 16kHz 单声道 PCM16 little-endian，并通过 WebSocket 二进制消息发送。
+麦克风输入需要转换为服务端 `kong-voice-agent.audio` 配置的 PCM 格式，并通过 WebSocket 二进制消息发送。默认配置是 16kHz 单声道 PCM16 little-endian。
 
 ```js
 socket.send(pcmArrayBuffer);
@@ -116,6 +116,7 @@ socket.send(pcmArrayBuffer);
 - 将输入采样率重采样到 16000Hz。
 - 将 Float32 范围 `[-1, 1]` 裁剪并写入 `Int16Array`。
 - 每 20ms 左右发送一个二进制分片。
+- 如果后端修改了 `sample-rate`、`channels` 或 `upload-chunk-ms`，前端需要同步修改重采样、混音和分片参数；当前 WebSocket 协议不会自动协商这些值。
 
 ## 下行消息
 
@@ -227,7 +228,7 @@ function sendText(text) {
 
 - `bad_message`：JSON 格式错误、缺少 `type`、缺少 `payload.text`。
 - WebSocket 断开：前端应停止采集麦克风并禁用发送按钮。
-- 音频格式错误：服务端当前按固定 PCM 格式处理，前端必须完成重采样和 PCM16 转换。
+- 音频格式错误：服务端按 `kong-voice-agent.audio` 配置处理 PCM，前端必须完成对应的重采样、声道处理和 PCM16 转换。
 
 建议前端把最近 100 条事件保留在调试日志里，联调时按时间、`type`、`turnId` 和 `payload` 排查。
 

@@ -1,5 +1,6 @@
 package io.github.kongweiguang.voice.agent.session;
 
+import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.support.NoopStreamingAsrAdapter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -17,6 +18,7 @@ import java.security.Principal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,7 +36,10 @@ class SessionManagerTest {
     @Test
     @DisplayName("创建独立 session 并在断连时清理")
     void createsIndependentSessionsAndDestroysThem() {
-        SessionManager manager = new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter());
+        SessionManager manager = new SessionManager(
+                (sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT
+        );
         WebSocketSession ws1 = new StubWebSocketSession();
         WebSocketSession ws2 = new StubWebSocketSession();
 
@@ -50,6 +55,24 @@ class SessionManagerTest {
 
         assertThat(manager.get(ws1)).isEmpty();
         assertThat(manager.activeCount()).isEqualTo(1);
+    }
+
+    /**
+     * 保护会话创建时使用外部配置绑定后的音频格式，而不是重新落回硬编码默认值。
+     */
+    @Test
+    @DisplayName("创建 session 时使用配置化音频格式")
+    void createsSessionWithConfiguredAudioFormat() {
+        AudioFormatSpec configuredFormat = new AudioFormatSpec(8000, 2, "s16le", 40);
+        AtomicReference<AudioFormatSpec> asrFormat = new AtomicReference<>();
+        SessionManager manager = new SessionManager((sessionId, format) -> {
+            asrFormat.set(format);
+            return new NoopStreamingAsrAdapter();
+        }, configuredFormat);
+
+        manager.create(new StubWebSocketSession());
+
+        assertThat(asrFormat.get()).isEqualTo(configuredFormat);
     }
 
     /**

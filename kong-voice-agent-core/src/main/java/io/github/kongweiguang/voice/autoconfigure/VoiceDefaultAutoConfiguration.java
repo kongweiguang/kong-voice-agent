@@ -1,5 +1,6 @@
 package io.github.kongweiguang.voice.autoconfigure;
 
+import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.vad.SileroVadEngine;
 import io.github.kongweiguang.voice.agent.vad.VadConfig;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
@@ -15,7 +16,7 @@ import org.springframework.core.io.ResourceLoader;
  * @author kongweiguang
  */
 @AutoConfiguration
-@EnableConfigurationProperties(VadConfig.class)
+@EnableConfigurationProperties({AudioFormatSpec.class, VadConfig.class})
 public class VoiceDefaultAutoConfiguration {
     /**
      * 默认 VAD Bean。业务方声明自己的 VadEngine 后，该默认实现自动让位。

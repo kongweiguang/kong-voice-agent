@@ -30,11 +30,16 @@ public class SessionManager {
     private final StreamingAsrAdapterFactory asrAdapterFactory;
 
     /**
+     * 从外部配置绑定的会话音频格式。
+     */
+    private final AudioFormatSpec audioFormatSpec;
+
+    /**
      * 为新 WebSocket 连接创建语音会话状态。
      */
     public SessionState create(WebSocketSession webSocketSession) {
         String sessionId = IdUtils.sessionId();
-        SessionState state = new SessionState(sessionId, AudioFormatSpec.DEFAULT, asrAdapterFactory);
+        SessionState state = new SessionState(sessionId, audioFormatSpec, asrAdapterFactory);
         sessions.put(webSocketSession.getId(), state);
         return state;
     }

@@ -50,10 +50,12 @@
 - 将 WebSocket 入站 `WsMessage.payload` 调整为 `JsonNode`，并在协议模型中集中校验 `payload.text`
 - 补充 `AGENTS.md` 开源维护、长期可维护性优先和符号级中文注释要求
 - 将 WebSocket JSON 文本消息改为 `WsTextMessageHandlerRegistry` 策略分发，内置 type 保持稳定，业务方可新增但不能覆盖内置 type
+- 将 `kong-voice-agent.audio` 绑定到 `AudioFormatSpec`，新建 session 时使用配置化音频格式创建 PCM 缓冲和每会话 ASR 适配器
 
 ## 关键约束
 
-- 只支持 16kHz / mono / 16-bit PCM little-endian
+- 默认支持 16kHz / mono / 16-bit PCM little-endian，运行时音频参数从 `kong-voice-agent.audio` 读取
+- 当前 WebSocket 协议不做音频格式协商，客户端发送的 PCM 必须与服务端音频配置一致
 - 使用 WebSocket 持续上传音频
 - 允许通过 WebSocket JSON 文本消息直接提交用户文本
 - 允许 ASR / LLM / TTS 先走 mock

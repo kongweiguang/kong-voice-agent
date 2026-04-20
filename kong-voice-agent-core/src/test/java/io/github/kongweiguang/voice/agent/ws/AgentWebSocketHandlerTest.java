@@ -1,6 +1,7 @@
 package io.github.kongweiguang.voice.agent.ws;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
@@ -45,7 +46,7 @@ class AgentWebSocketHandlerTest {
         RecordingHandler textHandler = new RecordingHandler(WsMessageType.text.name());
         WsTextMessageHandlerRegistry registry = new WsTextMessageHandlerRegistry(List.of(textHandler));
         AgentWebSocketHandler handler = new AgentWebSocketHandler(
-                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter()),
+                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT),
                 mock(VoicePipelineService.class),
                 new PlaybackDispatcher(),
                 registry
@@ -65,7 +66,7 @@ class AgentWebSocketHandlerTest {
     @DisplayName("策略异常会转换为 error 事件")
     void sendsErrorWhenRegistryRejectsMessage() throws Exception {
         AgentWebSocketHandler handler = new AgentWebSocketHandler(
-                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter()),
+                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT),
                 mock(VoicePipelineService.class),
                 new PlaybackDispatcher(),
                 new WsTextMessageHandlerRegistry(List.of())

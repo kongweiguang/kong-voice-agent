@@ -8,7 +8,7 @@ Kong Voice Agent 是一个面向生产场景设计的 Java Voice Agent 后端框
 
 - WebSocket 端点：`ws://localhost:9877/ws/agent`
 - 文本输入：直接发送 JSON 文本消息进入 Agent 回复链路
-- 音频输入：发送 16kHz / mono / 16-bit PCM little-endian 二进制帧
+- 音频输入：默认发送 16kHz / mono / 16-bit PCM little-endian 二进制帧，格式可通过配置调整
 - Session 隔离：每个 WebSocket 连接拥有独立 session
 - Turn 隔离：所有异步结果通过 `turnId` 防止旧回复污染新对话
 - VAD：优先加载 `models/silero_vad.onnx`，模型不可用时自动回退到 RMS fallback
@@ -151,7 +151,7 @@ socket.addEventListener("message", (event) => {
 
 ## 音频输入说明
 
-服务端当前固定按以下格式处理 WebSocket 二进制音频帧：
+服务端默认按以下格式处理 WebSocket 二进制音频帧，实际值来自 `kong-voice-agent.audio` 配置：
 
 - 采样率：`16000Hz`
 - 声道：`mono`
@@ -159,6 +159,8 @@ socket.addEventListener("message", (event) => {
 - 推荐分片：`20ms`，约 `640 bytes`
 
 前端采集麦克风时，需要把浏览器 `AudioContext` 的 Float32 音频重采样到 16kHz，并转换为 PCM16 little-endian 后再发送。仓库内的 `kong-voice-agent-app/frontend-demo.html` 已包含这条验证路径，可以作为前端接入参考。
+
+如果修改 `sample-rate`、`channels` 或 `upload-chunk-ms`，前端采集和重采样逻辑也要同步调整；当前服务端不会在 WebSocket 中做音频格式协商。
 
 ## 项目结构
 
@@ -206,6 +208,8 @@ kong-voice-agent:
     speech-threshold: 0.6
     fallback-enabled: true
 ```
+
+`kong-voice-agent.audio` 会绑定到运行时 `AudioFormatSpec`，用于每个新 session 的 PCM 缓冲区、pre-roll 缓冲区和每会话 ASR 适配器创建。
 
 如果需要指定 VAD 模型路径，可以设置环境变量：
 
@@ -263,7 +267,7 @@ ws://localhost:9877/ws/agent
 
 ### 麦克风没有事件或没有 ASR final
 
-先用文本输入验证后端链路，再检查浏览器是否授予麦克风权限。音频必须转换为 16kHz / mono / PCM16 little-endian；如果采样率或格式不对，服务端无法按预期处理。
+先用文本输入验证后端链路，再检查浏览器是否授予麦克风权限。音频必须转换为服务端 `kong-voice-agent.audio` 配置的格式；默认是 16kHz / mono / PCM16 little-endian。如果采样率或格式不对，服务端无法按预期处理。
 
 ### 为什么 partial transcript 不会触发 LLM
 

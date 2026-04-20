@@ -5,7 +5,8 @@ import io.github.kongweiguang.voice.agent.hook.VoicePipelineHook;
 import io.github.kongweiguang.voice.agent.llm.LlmChunk;
 import io.github.kongweiguang.voice.agent.llm.LlmOrchestrator;
 import io.github.kongweiguang.voice.agent.llm.LlmRequest;
-import io.github.kongweiguang.voice.agent.model.*;
+import io.github.kongweiguang.voice.agent.model.AgentEvent;
+import io.github.kongweiguang.voice.agent.model.EventType;
 import io.github.kongweiguang.voice.agent.model.payload.*;
 import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
@@ -17,6 +18,7 @@ import io.github.kongweiguang.voice.agent.turn.TurnEvent;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketSession;
@@ -64,21 +66,24 @@ public class VoicePipelineService {
     private final InterruptionManager interruptionManager;
 
     /**
+     * 业务扩展 hook，按注册顺序观察关键流水线节点。
+     */
+    private final List<VoicePipelineHook> hooks;
+
+
+    /**
      * 音频处理虚拟线程执行器。
      */
+    @Autowired
     @Qualifier("audioTaskExecutor")
-    private final Executor audioTaskExecutor;
+    private Executor audioTaskExecutor;
 
     /**
      * LLM/TTS 下游任务虚拟线程执行器。
      */
+    @Autowired
     @Qualifier("agentTaskExecutor")
-    private final Executor agentTaskExecutor;
-
-    /**
-     * 业务扩展 hook，按注册顺序观察关键流水线节点。
-     */
-    private final List<VoicePipelineHook> hooks;
+    private Executor agentTaskExecutor;
 
     /**
      * 接收 WebSocket 线程送来的 PCM，并将耗时工作调度到 IO 线程之外。

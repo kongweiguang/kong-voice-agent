@@ -1,0 +1,37 @@
+package io.github.kongweiguang.voice.agent.vad;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/**
+ * Silero VAD 加载和 RMS 兜底行为的外部配置。
+ *
+ * @author kongweiguang
+ */
+@ConfigurationProperties(prefix = "voice-agent.vad")
+public record VadConfig(
+        /**
+         * Silero ONNX 模型路径，支持 Spring Resource 路径写法。
+         */
+        String modelPath,
+
+        /**
+         * 判定为说话的概率阈值。
+         */
+        double speechThreshold,
+
+        /**
+         * 模型缺失或推理失败时是否允许使用 RMS 兜底。
+         */
+        boolean fallbackEnabled) {
+    /**
+     * 归一化外部配置，保证开源用户缺省启动时仍能进入 mock 闭环。
+     */
+    public VadConfig {
+        if (modelPath == null || modelPath.isBlank()) {
+            modelPath = "file:models/silero_vad.onnx";
+        }
+        if (speechThreshold <= 0) {
+            speechThreshold = 0.6;
+        }
+    }
+}

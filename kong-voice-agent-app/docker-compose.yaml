@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  geological-disaster:
+    image: kong/kong-voice-agent:0.1
+    container_name: kong-voice-agent
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      # 配置文件
+      - ./logs/:/kong/server/logs/
+      # 模型文件统一放在项目 models 目录，容器内从 /kong/models 读取
+      - ./models/:/kong/models/
+    restart: always
+    environment:
+      TZ: Asia/Shanghai
+      SERVER_PORT: 9877
+      SPRING_ACTIVE: prod
+      VOICE_AGENT_VAD_MODEL_PATH: file:/kong/models/silero_vad.onnx
+    privileged: true
+    network_mode: "host"

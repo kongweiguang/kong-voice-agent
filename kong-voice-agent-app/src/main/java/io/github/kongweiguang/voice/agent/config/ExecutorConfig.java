@@ -1,7 +1,5 @@
 package io.github.kongweiguang.voice.agent.config;
 
-import io.github.kongweiguang.voice.agent.vad.VadConfig;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

@@ -102,7 +102,7 @@
 
 - `VadEngine` 定义统一接口。
 - `SileroVadEngine` 默认尝试加载项目根目录 `models/silero_vad.onnx`。
-- 打包部署后通过 compose 将项目 `./models/` 映射到容器 `/kong/models/`，并用 `VOICE_AGENT_VAD_MODEL_PATH=file:/kong/models/silero_vad.onnx` 指定运行时模型路径。
+- 打包部署后通过 compose 将项目 `./models/` 映射到容器 `/kong/models/`，并用 `KONG_VOICE_AGENT_VAD_MODEL_PATH=file:/kong/models/silero_vad.onnx` 指定运行时模型路径。
 - 所有模型文件统一放在 `models/` 目录，后续新增模型也复用该目录映射。
 - 模型存在时尝试通过 ONNX Runtime 推理。
 - 模型缺失或推理失败时回退到 RMS fallback。

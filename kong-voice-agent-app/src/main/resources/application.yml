@@ -10,13 +10,13 @@ logging:
     root: INFO
     io.github.kongweiguang.voice.agent: DEBUG
 
-voice-agent:
+kong-voice-agent:
   audio:
     sample-rate: 16000
     channels: 1
     sample-format: s16le
     upload-chunk-ms: 20
   vad:
-    model-path: ${VOICE_AGENT_VAD_MODEL_PATH:file:models/silero_vad.onnx}
+    model-path: ${KONG_VOICE_AGENT_VAD_MODEL_PATH:file:models/silero_vad.onnx}
     speech-threshold: 0.6
     fallback-enabled: true

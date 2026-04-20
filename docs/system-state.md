@@ -79,7 +79,7 @@
 - 下行事件构造必须使用 `AgentEventPayload` 的具体实体类，业务方可自定义实现，避免新增事件时重新引入松散 `Map` payload
 - 当前运行基线为 JDK 21，异步任务可以使用虚拟线程；虚拟线程涉及的共享状态锁优先使用 `ReentrantLock`，避免新增 `synchronized`
 - 模型文件统一放在项目根目录 `models/`；本地开发默认读取 `models/silero_vad.onnx`
-- 打包部署后通过 compose 将项目 `./models/` 映射到容器 `/kong/models/`，容器内模型路径由 `VOICE_AGENT_VAD_MODEL_PATH=file:/kong/models/silero_vad.onnx` 指定
+- 打包部署后通过 compose 将项目 `./models/` 映射到容器 `/kong/models/`，容器内模型路径由 `KONG_VOICE_AGENT_VAD_MODEL_PATH=file:/kong/models/silero_vad.onnx` 指定
 
 ## 已达成结论
 

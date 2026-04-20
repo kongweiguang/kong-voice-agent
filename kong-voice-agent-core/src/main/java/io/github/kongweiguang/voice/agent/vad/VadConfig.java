@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * @author kongweiguang
  */
-@ConfigurationProperties(prefix = "voice-agent.vad")
+@ConfigurationProperties(prefix = "kong-voice-agent.vad")
 public record VadConfig(
         /**
          * Silero ONNX 模型路径，支持 Spring Resource 路径写法。

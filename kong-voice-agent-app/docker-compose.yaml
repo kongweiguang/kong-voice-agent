@@ -17,6 +17,6 @@ services:
       TZ: Asia/Shanghai
       SERVER_PORT: 9877
       SPRING_ACTIVE: prod
-      VOICE_AGENT_VAD_MODEL_PATH: file:/kong/models/silero_vad.onnx
+      KONG_VOICE_AGENT_VAD_MODEL_PATH: file:/kong/models/silero_vad.onnx
     privileged: true
     network_mode: "host"

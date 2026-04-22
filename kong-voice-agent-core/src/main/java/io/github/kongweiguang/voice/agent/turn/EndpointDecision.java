@@ -17,6 +17,11 @@ public record EndpointDecision(
         boolean endpointReached,
 
         /**
+         * 本次判定是否仍在等待语义 EOU 确认。
+         */
+        boolean endpointWaiting,
+
+        /**
          * 触发该判定结果的原因。
          */
         String reason) {
@@ -24,6 +29,13 @@ public record EndpointDecision(
      * 表示本次音频窗口没有产生状态变化。
      */
     public static EndpointDecision none() {
-        return new EndpointDecision(false, false, "none");
+        return new EndpointDecision(false, false, false, "none");
+    }
+
+    /**
+     * 表示已经进入静音候选，但语义 EOU 尚未确认结束。
+     */
+    public static EndpointDecision waiting(String reason) {
+        return new EndpointDecision(false, false, true, reason);
     }
 }

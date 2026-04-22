@@ -1,6 +1,8 @@
 package io.github.kongweiguang.voice.agent.service;
 
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
+import io.github.kongweiguang.voice.agent.eou.EouConfig;
+import io.github.kongweiguang.voice.agent.eou.NoopEouDetector;
 import io.github.kongweiguang.voice.agent.support.TestSessionStates;
 import io.github.kongweiguang.voice.agent.hook.VoicePipelineHook;
 import io.github.kongweiguang.voice.agent.llm.LlmChunk;
@@ -53,6 +55,8 @@ class VoicePipelineTextInputTest {
         CapturingHook hook = new CapturingHook();
         VoicePipelineService service = new VoicePipelineService(
                 new NoopVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
                 this::replyOnce,
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
@@ -85,6 +89,8 @@ class VoicePipelineTextInputTest {
         PlaybackDispatcher dispatcher = new PlaybackDispatcher();
         VoicePipelineService service = new VoicePipelineService(
                 new NoopVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
                 this::replyOnce,
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
@@ -99,7 +105,112 @@ class VoicePipelineTextInputTest {
         assertThatThrownBy(() -> service.acceptText(session, ws, "   "))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("payload.text must not be blank");
-        assertThat(session.currentTurnId()).isZero();
+        assertThat(session.currentTurnId()).isNull();
+    }
+
+    /**
+     * TTS 位于 LLM 流式回调内，异常必须转成协议 error，不能向订阅线程继续冒泡。
+     */
+    @Test
+    @DisplayName("TTS 异常会转成 error 事件并结束本轮播报状态")
+    void publishesErrorWhenTtsFails() throws Exception {
+        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
+        VoicePipelineService service = new VoicePipelineService(
+                new NoopVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
+                this::replyOnce,
+                (turnId, startSeq, text, lastTextChunk) -> {
+                    throw new IllegalStateException("Kokoro TTS 返回了空音频");
+                },
+                dispatcher,
+                new InterruptionManager(dispatcher),
+                directExecutor(),
+                directExecutor(),
+                List.of()
+        );
+        SessionState session = TestSessionStates.create("s1");
+        CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+        service.acceptText(session, ws, "你好");
+
+        List<JsonNode> events = ws.sentEvents();
+        assertThat(events).extracting(node -> node.get("type").asText())
+                .containsSubsequence("agent_text_chunk", "error");
+        JsonNode error = findEvent(events, "error");
+        assertThat(error.at("/payload/code").asText()).isEqualTo("tts_failed");
+        assertThat(error.at("/payload/message").asText()).contains("Kokoro TTS 返回了空音频");
+        assertThat(session.agentSpeaking()).isFalse();
+    }
+
+    /**
+     * 某些流式 LLM 会用空片段表达完成信号，流水线应只收口状态，不触发 TTS。
+     */
+    @Test
+    @DisplayName("空的 LLM 完成片段不会触发 TTS")
+    void ignoresBlankLlmCompletionChunk() throws Exception {
+        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
+        VoicePipelineService service = new VoicePipelineService(
+                new NoopVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
+                (request, consumer) -> consumer.accept(new LlmChunk(request.turnId(), 0, null, true)),
+                (turnId, startSeq, text, lastTextChunk) -> {
+                    throw new AssertionError("空完成片段不应该触发 TTS");
+                },
+                dispatcher,
+                new InterruptionManager(dispatcher),
+                directExecutor(),
+                directExecutor(),
+                List.of()
+        );
+        SessionState session = TestSessionStates.create("s1");
+        CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+        service.acceptText(session, ws, "你好");
+
+        List<JsonNode> events = ws.sentEvents();
+        assertThat(events).extracting(node -> node.get("type").asText())
+                .containsSubsequence("state_changed", "asr_final", "agent_thinking");
+        assertThat(events).noneMatch(node -> "tts_audio_chunk".equals(node.get("type").asText()));
+        assertThat(session.agentSpeaking()).isFalse();
+    }
+
+    @Test
+    @DisplayName("LLM 文本片段会直接触发 TTS")
+    void sendsEachLlmTextChunkToTts() throws Exception {
+        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
+        List<String> synthesizedTexts = new ArrayList<>();
+        VoicePipelineService service = new VoicePipelineService(
+                new NoopVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
+                (request, consumer) -> {
+                    consumer.accept(new LlmChunk(request.turnId(), 0, "Hello", false));
+                    consumer.accept(new LlmChunk(request.turnId(), 1, " ", false));
+                    consumer.accept(new LlmChunk(request.turnId(), 2, "world", false));
+                    consumer.accept(new LlmChunk(request.turnId(), 3, ".", true));
+                },
+                (turnId, startSeq, text, lastTextChunk) -> {
+                    synthesizedTexts.add(text);
+                    return List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text));
+                },
+                dispatcher,
+                new InterruptionManager(dispatcher),
+                directExecutor(),
+                directExecutor(),
+                List.of()
+        );
+        SessionState session = TestSessionStates.create("s1");
+        CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+        service.acceptText(session, ws, "hello");
+
+        List<JsonNode> events = ws.sentEvents();
+        assertThat(events).extracting(node -> node.get("type").asText())
+                .containsSubsequence("agent_text_chunk", "agent_text_chunk", "agent_text_chunk", "tts_audio_chunk");
+        assertThat(synthesizedTexts).containsExactly("Hello", " ", "world", ".");
+        assertThat(events.stream().filter(node -> "tts_audio_chunk".equals(node.get("type").asText()))).hasSize(4);
     }
 
     private void replyOnce(LlmRequest request, Consumer<LlmChunk> consumer) {
@@ -108,6 +219,10 @@ class VoicePipelineTextInputTest {
 
     private Executor directExecutor() {
         return Runnable::run;
+    }
+
+    private EouConfig eouConfig() {
+        return new EouConfig(true, null, null, null, true, 0.5, 500, 1600, 300, "zh");
     }
 
     private JsonNode findEvent(List<JsonNode> events, String type) {
@@ -154,7 +269,7 @@ class VoicePipelineTextInputTest {
      */
     private static final class NoopVadEngine implements VadEngine {
         @Override
-        public VadDecision detect(long turnId, byte[] pcm) {
+        public VadDecision detect(String turnId, byte[] pcm) {
             return new VadDecision(turnId, 0, false, Instant.now());
         }
 

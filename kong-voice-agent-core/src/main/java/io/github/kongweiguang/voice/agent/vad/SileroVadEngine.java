@@ -5,6 +5,8 @@ import ai.onnxruntime.OnnxValue;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 import io.github.kongweiguang.voice.agent.audio.PcmUtils;
+import io.github.kongweiguang.voice.agent.onnx.OnnxRuntimeConfig;
+import io.github.kongweiguang.voice.agent.onnx.OnnxSessionOptionsFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -37,6 +39,11 @@ public class SileroVadEngine implements VadEngine {
     private final OrtSession session;
 
     /**
+     * ONNX 会话选项，模型不可用且允许兜底时为空。
+     */
+    private final OrtSession.SessionOptions sessionOptions;
+
+    /**
      * Silero 循环状态 h，在连续窗口之间保留。
      */
     private float[][] h = new float[2][64];
@@ -50,15 +57,26 @@ public class SileroVadEngine implements VadEngine {
      * 尝试加载 Silero ONNX 模型；失败时根据配置决定是否回退 RMS。
      */
     public SileroVadEngine(VadConfig config, ResourceLoader resourceLoader) {
+        this(config, resourceLoader, new OnnxSessionOptionsFactory(new OnnxRuntimeConfig(false, 0, true)));
+    }
+
+    /**
+     * 尝试加载 Silero ONNX 模型，并按 ONNX Runtime 配置选择 CPU 或 CUDA。
+     */
+    public SileroVadEngine(VadConfig config,
+                           ResourceLoader resourceLoader,
+                           OnnxSessionOptionsFactory sessionOptionsFactory) {
         this.config = config;
         OrtEnvironment env = null;
         OrtSession loaded = null;
+        OrtSession.SessionOptions options = null;
         try {
             Resource resource = resourceLoader.getResource(config.modelPath());
             if (resource.exists() && resource.isFile()) {
                 File model = resource.getFile();
                 env = OrtEnvironment.getEnvironment();
-                loaded = env.createSession(model.getAbsolutePath(), new OrtSession.SessionOptions());
+                options = sessionOptionsFactory.create();
+                loaded = env.createSession(model.getAbsolutePath(), options);
                 log.info("Loaded Silero VAD ONNX model from {}", model.getAbsolutePath());
             } else if (!config.fallbackEnabled()) {
                 throw new IllegalStateException("VAD model not found and fallback is disabled: " + config.modelPath());
@@ -70,13 +88,18 @@ public class SileroVadEngine implements VadEngine {
                 throw new IllegalStateException("Failed to load VAD model and fallback is disabled", ex);
             }
             log.warn("Failed to load Silero VAD ONNX model, using RMS fallback: {}", ex.getMessage());
+            closeQuietly(loaded);
+            closeQuietly(options);
             if (env != null) {
                 env.close();
                 env = null;
             }
+            loaded = null;
+            options = null;
         }
         this.environment = env;
         this.session = loaded;
+        this.sessionOptions = options;
     }
 
     /**
@@ -84,7 +107,7 @@ public class SileroVadEngine implements VadEngine {
      * 让语音流水线的其余部分仍可被验证。
      */
     @Override
-    public VadDecision detect(long turnId, byte[] pcm) {
+    public VadDecision detect(String turnId, byte[] pcm) {
         short[] samples = PcmUtils.littleEndianBytesToShorts(pcm.length % 2 == 0 ? pcm : PcmUtils.trimToLatest(pcm, pcm.length - 1));
         double probability = session == null ? rmsFallbackProbability(samples) : inferOrFallback(samples);
         return new VadDecision(turnId, probability, probability >= config.speechThreshold(), Instant.now());
@@ -175,14 +198,23 @@ public class SileroVadEngine implements VadEngine {
      */
     @Override
     public void close() {
-        try {
-            if (session != null) {
-                session.close();
-            }
-        } catch (Exception ignored) {
-        }
+        closeQuietly(session);
+        closeQuietly(sessionOptions);
         if (environment != null) {
             environment.close();
+        }
+    }
+
+    /**
+     * 关闭可释放资源，清理时不抛出额外异常。
+     */
+    private void closeQuietly(AutoCloseable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
         }
     }
 }

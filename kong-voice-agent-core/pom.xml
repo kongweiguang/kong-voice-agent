@@ -38,7 +38,11 @@
         </dependency>
         <dependency>
             <groupId>com.microsoft.onnxruntime</groupId>
-            <artifactId>onnxruntime</artifactId>
+            <artifactId>${onnxruntime.artifactId}</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -9,8 +9,22 @@ logging:
   level:
     root: INFO
     io.github.kongweiguang.voice.agent: DEBUG
+ai:
+  model:
+    api-key: ${AI_API_KEY:sk-your-api-key-here}
+    base-url: http://172.16.41.254:30074/v1
+    model-name: Qwen3-32B
 
 kong-voice-agent:
+  auth:
+    fixed-user:
+      account-id: ${KONG_VOICE_AGENT_AUTH_FIXED_USER_ACCOUNT_ID:123456}
+      username: ${KONG_VOICE_AGENT_AUTH_FIXED_USER_USERNAME:demo}
+      password: ${KONG_VOICE_AGENT_AUTH_FIXED_USER_PASSWORD:demo123456}
+  onnx:
+    gpu-enabled: ${KONG_VOICE_AGENT_ONNX_GPU_ENABLED:true}
+    gpu-device-id: ${KONG_VOICE_AGENT_ONNX_GPU_DEVICE_ID:0}
+    fallback-to-cpu: ${KONG_VOICE_AGENT_ONNX_FALLBACK_TO_CPU:false}
   audio:
     sample-rate: 16000
     channels: 1
@@ -20,3 +34,34 @@ kong-voice-agent:
     model-path: ${KONG_VOICE_AGENT_VAD_MODEL_PATH:file:models/silero_vad.onnx}
     speech-threshold: 0.6
     fallback-enabled: true
+  eou:
+    enabled: ${KONG_VOICE_AGENT_EOU_ENABLED:true}
+    provider: livekit-multilingual
+    model-path: ${KONG_VOICE_AGENT_EOU_MODEL_PATH:file:models/livekit-turn-detector/model_quantized.onnx}
+    tokenizer-path: ${KONG_VOICE_AGENT_EOU_TOKENIZER_PATH:file:models/livekit-turn-detector/tokenizer.json}
+    fallback-enabled: true
+    default-threshold: 0.5
+    min-silence-ms: 500
+    max-silence-ms: 1600
+    inference-timeout-ms: 300
+    language: zh
+  asr:
+    dashscope:
+      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
+      base-url: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      chat-completions-path: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_CHAT_COMPLETIONS_PATH:/chat/completions}
+      model: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_MODEL:qwen3-asr-flash}
+      language: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_LANGUAGE:zh}
+      enable-itn: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_ENABLE_ITN:true}
+      timeout-ms: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_TIMEOUT_MS:15000}
+  tts:
+    dashscope:
+      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
+      base-url: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com}
+      generation-path: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_GENERATION_PATH:/api/v1/services/aigc/multimodal-generation/generation}
+      model: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_MODEL:qwen3-tts-flash}
+      voice: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_VOICE:Cherry}
+      language-type: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_LANGUAGE_TYPE:Chinese}
+      streaming-enabled: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_STREAMING_ENABLED:true}
+      timeout-ms: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_TIMEOUT_MS:30000}
+

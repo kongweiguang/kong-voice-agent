@@ -11,12 +11,12 @@ public interface StreamingAsrAdapter extends AutoCloseable {
     /**
      * 将音频送入 ASR，并按需产出局部转写。
      */
-    Optional<AsrUpdate> acceptAudio(long turnId, byte[] pcm);
+    Optional<AsrUpdate> acceptAudio(String turnId, byte[] pcm);
 
     /**
      * 为已提交的 turn 完成最终识别。
      */
-    AsrUpdate commitTurn(long turnId);
+    AsrUpdate commitTurn(String turnId);
 
     @Override
     void close();

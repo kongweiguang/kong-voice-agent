@@ -11,7 +11,7 @@ public record AsrUpdate(
         /**
          * 本次 ASR 更新所属的 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * ASR 当前产出的转写文本。
@@ -30,14 +30,14 @@ public record AsrUpdate(
     /**
      * 创建流式局部转写更新。
      */
-    public static AsrUpdate partial(long turnId, String transcript) {
+    public static AsrUpdate partial(String turnId, String transcript) {
         return new AsrUpdate(turnId, transcript, false, Instant.now());
     }
 
     /**
      * 创建最终转写更新，该更新允许流水线进入 LLM 阶段。
      */
-    public static AsrUpdate finalUpdate(long turnId, String transcript) {
+    public static AsrUpdate finalUpdate(String turnId, String transcript) {
         return new AsrUpdate(turnId, transcript, true, Instant.now());
     }
 }

@@ -9,7 +9,7 @@ public interface VadEngine extends AutoCloseable {
     /**
      * 将 PCM 窗口转换为说话概率和二值说话标记。
      */
-    VadDecision detect(long turnId, byte[] pcm);
+    VadDecision detect(String turnId, byte[] pcm);
 
     /**
      * 表示当前引擎是否使用 ONNX 模型而非兜底逻辑。

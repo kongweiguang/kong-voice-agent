@@ -9,7 +9,7 @@ public record TtsChunk(
         /**
          * 当前音频块所属的 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * 当前音频块在本轮 TTS 输出中的序号。

@@ -2,6 +2,7 @@ package io.github.kongweiguang.voice.agent.ws;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
+import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
@@ -46,7 +47,7 @@ class AgentWebSocketHandlerTest {
         RecordingHandler textHandler = new RecordingHandler(WsMessageType.text.name());
         WsTextMessageHandlerRegistry registry = new WsTextMessageHandlerRegistry(List.of(textHandler));
         AgentWebSocketHandler handler = new AgentWebSocketHandler(
-                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT),
+                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT, eouConfig()),
                 mock(VoicePipelineService.class),
                 new PlaybackDispatcher(),
                 registry
@@ -66,7 +67,7 @@ class AgentWebSocketHandlerTest {
     @DisplayName("策略异常会转换为 error 事件")
     void sendsErrorWhenRegistryRejectsMessage() throws Exception {
         AgentWebSocketHandler handler = new AgentWebSocketHandler(
-                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT),
+                new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(), AudioFormatSpec.DEFAULT, eouConfig()),
                 mock(VoicePipelineService.class),
                 new PlaybackDispatcher(),
                 new WsTextMessageHandlerRegistry(List.of())
@@ -192,5 +193,9 @@ class AgentWebSocketHandlerTest {
         @Override
         public void close(CloseStatus status) throws IOException {
         }
+    }
+
+    private EouConfig eouConfig() {
+        return new EouConfig(true, null, null, null, true, 0.5, 500, 1600, 300, "zh");
     }
 }

@@ -9,7 +9,7 @@ public record LlmChunk(
         /**
          * 当前 LLM 输出所属的 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * 当前文本片段在本轮回复中的序号。

@@ -56,7 +56,7 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         SessionState state = sessionManager.create(session);
         log.info("WebSocket connected: ws={}, session={}", session.getId(), state.sessionId());
-        dispatcher.send(session, AgentEvent.of(EventType.state_changed, state.sessionId(), 0, new StateChangedPayload("IDLE", "connected")));
+        dispatcher.send(session, AgentEvent.of(EventType.state_changed, state.sessionId(), state.currentTurnId(), new StateChangedPayload("IDLE", "connected")));
     }
 
     /**

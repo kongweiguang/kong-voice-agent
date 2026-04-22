@@ -25,11 +25,11 @@ class VoicePipelinePolicyTest {
     @DisplayName("打断后旧 turn 结果不可再发布")
     void sessionRejectsOldTurnAfterInterruption() {
         SessionState session = TestSessionStates.create("s1");
-        long oldTurn = session.nextTurnId();
+        String oldTurn = session.nextTurnId();
         session.lifecycleState(TurnLifecycleState.AGENT_SPEAKING);
         session.agentSpeaking(true);
         session.invalidateTurn(oldTurn);
-        long newTurn = session.nextTurnId();
+        String newTurn = session.nextTurnId();
 
         AsrUpdate oldFinal = AsrUpdate.finalUpdate(oldTurn, "old");
         AsrUpdate newFinal = AsrUpdate.finalUpdate(newTurn, "new");

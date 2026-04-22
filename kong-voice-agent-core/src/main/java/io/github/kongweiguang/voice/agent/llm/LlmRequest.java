@@ -14,7 +14,7 @@ public record LlmRequest(
         /**
          * 已提交用户 turn 的 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * 触发本次 LLM 请求的用户最终文本。

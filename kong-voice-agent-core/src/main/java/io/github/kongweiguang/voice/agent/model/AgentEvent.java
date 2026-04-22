@@ -15,11 +15,11 @@ import java.time.Instant;
  * @param payload   事件专属载荷，空载荷事件使用 {@link EmptyPayload}
  * @author kongweiguang
  */
-public record AgentEvent(EventType type, String sessionId, long turnId, Instant timestamp, AgentEventPayload payload) {
+public record AgentEvent(EventType type, String sessionId, String turnId, Instant timestamp, AgentEventPayload payload) {
     /**
      * 创建带当前时间戳的事件，并在 payload 为空时使用空实体兜底。
      */
-    public static AgentEvent of(EventType type, String sessionId, long turnId, AgentEventPayload payload) {
+    public static AgentEvent of(EventType type, String sessionId, String turnId, AgentEventPayload payload) {
         return new AgentEvent(type, sessionId, turnId, Instant.now(), payload == null ? EmptyPayload.INSTANCE : payload);
     }
 }

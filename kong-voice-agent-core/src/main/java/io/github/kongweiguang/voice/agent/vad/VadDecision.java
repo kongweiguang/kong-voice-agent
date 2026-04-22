@@ -11,7 +11,7 @@ public record VadDecision(
         /**
          * 当前 VAD 判定所属的 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * 语音活动概率，范围约定为 0 到 1。

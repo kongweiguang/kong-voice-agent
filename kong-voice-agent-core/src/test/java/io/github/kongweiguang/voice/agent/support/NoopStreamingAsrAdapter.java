@@ -12,12 +12,12 @@ import java.util.Optional;
  */
 public class NoopStreamingAsrAdapter implements StreamingAsrAdapter {
     @Override
-    public Optional<AsrUpdate> acceptAudio(long turnId, byte[] pcm) {
+    public Optional<AsrUpdate> acceptAudio(String turnId, byte[] pcm) {
         return Optional.empty();
     }
 
     @Override
-    public AsrUpdate commitTurn(long turnId) {
+    public AsrUpdate commitTurn(String turnId) {
         return AsrUpdate.finalUpdate(turnId, "");
     }
 

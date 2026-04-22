@@ -1,6 +1,7 @@
 package io.github.kongweiguang.voice.agent.turn;
 
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
+import io.github.kongweiguang.voice.agent.eou.EouPrediction;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.session.TurnLifecycleState;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
@@ -29,7 +30,11 @@ public class TurnManager {
     /**
      * 根据一次音频/VAD/ASR 更新推进状态机。
      */
-    public List<TurnEvent> onAudio(SessionState session, VadDecision vad, Optional<AsrUpdate> asrUpdate, Instant now) {
+    public List<TurnEvent> onAudio(SessionState session,
+                                   VadDecision vad,
+                                   Optional<AsrUpdate> asrUpdate,
+                                   Optional<EouPrediction> eouPrediction,
+                                   Instant now) {
         lock.lock();
         try {
             List<TurnEvent> events = new ArrayList<>();
@@ -42,13 +47,13 @@ public class TurnManager {
                 session.lastSpeechAt(now);
             }
 
-            long turnId = session.currentTurnId();
-            if (turnId == 0 && vad.speech()) {
+            String turnId = session.currentTurnId();
+            if (turnId == null && vad.speech()) {
                 turnId = session.nextTurnId();
                 session.activeAsrTurnId(turnId);
             }
 
-            EndpointDecision decision = endpointingPolicy.evaluate(session, vad, now, speechStartAt);
+            EndpointDecision decision = endpointingPolicy.evaluate(session, vad, now, speechStartAt, eouPrediction);
             if (decision.speechStarted()) {
                 speechStartAt = now;
                 session.lifecycleState(TurnLifecycleState.USER_PRE_SPEECH);
@@ -64,6 +69,10 @@ public class TurnManager {
             }
 
             asrUpdate.filter(update -> !update.fin()).ifPresent(update -> session.partialTranscript(update.transcript()));
+
+            if (decision.endpointWaiting() && session.lifecycleState() == TurnLifecycleState.USER_ENDPOINTING) {
+                events.add(TurnEvent.state(session.currentTurnId(), TurnLifecycleState.USER_ENDPOINTING, decision.reason()));
+            }
 
             // 提交事件是唯一允许 LLM/TTS 启动的边界。
             if (decision.endpointReached() && session.lifecycleState() != TurnLifecycleState.USER_TURN_COMMITTED) {

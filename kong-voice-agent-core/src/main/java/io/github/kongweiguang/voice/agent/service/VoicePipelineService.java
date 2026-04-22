@@ -1,6 +1,10 @@
 package io.github.kongweiguang.voice.agent.service;
 
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
+import io.github.kongweiguang.voice.agent.eou.EouConfig;
+import io.github.kongweiguang.voice.agent.eou.EouContext;
+import io.github.kongweiguang.voice.agent.eou.EouDetector;
+import io.github.kongweiguang.voice.agent.eou.EouPrediction;
 import io.github.kongweiguang.voice.agent.hook.VoicePipelineHook;
 import io.github.kongweiguang.voice.agent.llm.LlmChunk;
 import io.github.kongweiguang.voice.agent.llm.LlmOrchestrator;
@@ -17,18 +21,18 @@ import io.github.kongweiguang.voice.agent.tts.TtsOrchestrator;
 import io.github.kongweiguang.voice.agent.turn.TurnEvent;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -38,12 +42,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author kongweiguang
  */
 @Service
-@RequiredArgsConstructor
 public class VoicePipelineService {
     /**
      * 语音活动检测器，负责把 PCM 转为说话概率。
      */
     private final VadEngine vadEngine;
+
+    /**
+     * EOU 判断器，真实业务可通过 Bean 覆盖。
+     */
+    private final EouDetector eouDetector;
+
+    /**
+     * EOU 端点等待窗口配置。
+     */
+    private final EouConfig eouConfig;
 
     /**
      * LLM 编排边界，真实业务可通过 Bean 覆盖。
@@ -74,16 +87,37 @@ public class VoicePipelineService {
     /**
      * 音频处理虚拟线程执行器。
      */
-    @Autowired
-    @Qualifier("audioTaskExecutor")
-    private Executor audioTaskExecutor;
+    private final Executor audioTaskExecutor;
 
     /**
      * LLM/TTS 下游任务虚拟线程执行器。
      */
-    @Autowired
-    @Qualifier("agentTaskExecutor")
-    private Executor agentTaskExecutor;
+    private final Executor agentTaskExecutor;
+
+    /**
+     * 创建语音流水线门面，显式注入执行器便于测试稳定替换。
+     */
+    public VoicePipelineService(VadEngine vadEngine,
+                                EouDetector eouDetector,
+                                EouConfig eouConfig,
+                                LlmOrchestrator llmOrchestrator,
+                                TtsOrchestrator ttsOrchestrator,
+                                PlaybackDispatcher dispatcher,
+                                InterruptionManager interruptionManager,
+                                @Qualifier("audioTaskExecutor") Executor audioTaskExecutor,
+                                @Qualifier("agentTaskExecutor") Executor agentTaskExecutor,
+                                List<VoicePipelineHook> hooks) {
+        this.vadEngine = vadEngine;
+        this.eouDetector = eouDetector;
+        this.eouConfig = eouConfig;
+        this.llmOrchestrator = llmOrchestrator;
+        this.ttsOrchestrator = ttsOrchestrator;
+        this.dispatcher = dispatcher;
+        this.interruptionManager = interruptionManager;
+        this.audioTaskExecutor = audioTaskExecutor;
+        this.agentTaskExecutor = agentTaskExecutor;
+        this.hooks = hooks;
+    }
 
     /**
      * 接收 WebSocket 线程送来的 PCM，并将耗时工作调度到 IO 线程之外。
@@ -100,8 +134,8 @@ public class VoicePipelineService {
      * 客户端强制结束音频：提交 ASR 最终结果后再启动 LLM。
      */
     public void commitAudioEnd(SessionState session, WebSocketSession ws) {
-        long turnId = session.currentTurnId();
-        if (turnId <= 0 || !session.isCurrentTurn(turnId)) {
+        String turnId = session.currentTurnId();
+        if (!session.isCurrentTurn(turnId)) {
             return;
         }
         AsrUpdate fin = session.asrAdapter().commitTurn(turnId);
@@ -119,7 +153,7 @@ public class VoicePipelineService {
             throw new IllegalArgumentException("payload.text must not be blank");
         }
         hooks.forEach(hook -> hook.onTextReceived(session, ws, normalized));
-        long turnId = session.agentSpeaking()
+        String turnId = session.agentSpeaking()
                 ? interruptWithHooks(session, ws, "client_text")
                 : session.nextTurnId();
         session.lastSpeechAt(Instant.now());
@@ -148,24 +182,26 @@ public class VoicePipelineService {
      * 同一 session 内串行处理音频块，保护流式 ASR 和 turn 状态机的时间顺序。
      */
     private void processAudioLocked(SessionState session, WebSocketSession ws, byte[] pcm) {
-        long turnId = session.currentTurnId() == 0 ? 1 : session.currentTurnId();
+        String turnId = session.currentTurnId();
         VadDecision vad = vadEngine.detect(turnId, pcm);
         if (session.agentSpeaking() && vad.speech()) {
-            long newTurnId = interruptWithHooks(session, ws, "barge_in");
+            String newTurnId = interruptWithHooks(session, ws, "barge_in");
             vad = new VadDecision(newTurnId, vad.speechProbability(), vad.speech(), vad.audioAt());
         }
-        if (!vad.speech() && session.currentTurnId() == 0) {
+        if (!vad.speech() && !session.hasCurrentTurn()) {
             return;
         }
-        if (vad.speech() && (session.currentTurnId() == 0 || session.lifecycleState() == TurnLifecycleState.IDLE)) {
+        if (vad.speech() && (!session.hasCurrentTurn() || session.lifecycleState() == TurnLifecycleState.IDLE)) {
             session.nextTurnId();
         }
-        long activeTurnId = session.currentTurnId();
+        String activeTurnId = session.currentTurnId();
         session.activeAsrTurnId(activeTurnId);
         Optional<AsrUpdate> asrUpdate = session.asrAdapter().acceptAudio(activeTurnId, pcm);
         asrUpdate.ifPresent(update -> publishAsrPartial(session, ws, update));
 
-        List<TurnEvent> events = session.turnManager().onAudio(session, new VadDecision(activeTurnId, vad.speechProbability(), vad.speech(), vad.audioAt()), asrUpdate, Instant.now());
+        Instant now = Instant.now();
+        Optional<EouPrediction> eouPrediction = maybePredictEou(session, activeTurnId, vad, now);
+        List<TurnEvent> events = session.turnManager().onAudio(session, new VadDecision(activeTurnId, vad.speechProbability(), vad.speech(), vad.audioAt()), asrUpdate, eouPrediction, now);
         for (TurnEvent event : events) {
             if (event.interrupted()) {
                 interruptWithHooks(session, ws, event.reason());
@@ -195,15 +231,38 @@ public class VoicePipelineService {
         dispatcher.send(ws, AgentEvent.of(EventType.agent_thinking, session.sessionId(), fin.turnId(), new AgentThinkingPayload(fin.transcript())));
         CompletableFuture.runAsync(() -> {
             AtomicInteger ttsSeq = new AtomicInteger();
-            llmOrchestrator.stream(request, chunk -> handleLlmChunk(session, ws, chunk, ttsSeq));
+            AtomicBoolean failed = new AtomicBoolean(false);
+            try {
+                llmOrchestrator.stream(request, chunk -> {
+                    if (failed.get()) {
+                        return;
+                    }
+                    try {
+                        handleLlmChunk(session, ws, chunk, ttsSeq);
+                    } catch (Exception ex) {
+                        failed.set(true);
+                        publishPipelineFailure(session, ws, request.turnId(), "tts_failed", ex);
+                    }
+                });
+            } catch (Exception ex) {
+                failed.set(true);
+                publishPipelineFailure(session, ws, request.turnId(), "llm_failed", ex);
+            }
         }, agentTaskExecutor);
     }
 
     /**
-     * 发布 LLM 文本，并立即将其合成为 TTS 音频块。
+     * 发布 LLM 文本，并将当前片段直接提交给 TTS；文本聚合策略由业务自定义 LLM 实现自行决定。
      */
     private void handleLlmChunk(SessionState session, WebSocketSession ws, LlmChunk chunk, AtomicInteger ttsSeq) {
         if (!session.isCurrentTurn(chunk.turnId())) {
+            return;
+        }
+        boolean hasText = chunk.text() != null && !chunk.text().isEmpty();
+        if (!hasText) {
+            if (chunk.last()) {
+                completeAgentTurn(session, chunk.turnId());
+            }
             return;
         }
         hooks.forEach(hook -> hook.onLlmChunk(session, ws, chunk));
@@ -212,15 +271,57 @@ public class VoicePipelineService {
         session.lifecycleState(TurnLifecycleState.AGENT_SPEAKING);
         session.agentSpeaking(true);
         session.activeTtsTurnId(chunk.turnId());
-        List<TtsChunk> ttsChunks = ttsOrchestrator.synthesize(chunk.turnId(), ttsSeq.get(), chunk.text(), chunk.last());
-        ttsSeq.addAndGet(ttsChunks.size());
-        for (TtsChunk ttsChunk : ttsChunks) {
-            publishTts(session, ws, ttsChunk);
-        }
+        synthesizeTts(session, ws, chunk, ttsSeq);
         if (chunk.last() && session.isCurrentTurn(chunk.turnId())) {
-            session.agentSpeaking(false);
-            session.lifecycleState(TurnLifecycleState.IDLE);
+            completeAgentTurn(session, chunk.turnId());
         }
+    }
+
+    /**
+     * 将当前 LLM 文本片段提交给 TTS，并维护本轮 TTS 音频序号。
+     */
+    private void synthesizeTts(SessionState session, WebSocketSession ws, LlmChunk chunk, AtomicInteger ttsSeq) {
+        ttsOrchestrator.synthesizeStreaming(chunk.turnId(), ttsSeq.get(), chunk.text(), chunk.last(), ttsChunk -> {
+            publishTts(session, ws, ttsChunk);
+            ttsSeq.incrementAndGet();
+        });
+    }
+
+    /**
+     * LLM/TTS 属于异步下游，失败时要转成协议 error，避免异常泄漏到 Reactor 订阅线程。
+     */
+    private void publishPipelineFailure(SessionState session, WebSocketSession ws, String turnId, String code, Exception ex) {
+        if (!session.isCurrentTurn(turnId)) {
+            return;
+        }
+        completeAgentTurn(session, turnId);
+        dispatcher.send(ws, AgentEvent.of(EventType.error, session.sessionId(), turnId,
+                new ErrorPayload(code, rootMessage(ex))));
+    }
+
+    /**
+     * 提取最内层异常说明，优先把 Kokoro/LLM 的真实失败原因暴露给联调端。
+     */
+    private String rootMessage(Exception ex) {
+        Throwable current = ex;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? ex.getMessage() : message;
+    }
+
+    /**
+     * 当前 agent turn 正常结束或异常收口时统一清理会话播报标记。
+     */
+    private void completeAgentTurn(SessionState session, String turnId) {
+        if (!session.isCurrentTurn(turnId)) {
+            return;
+        }
+        session.agentSpeaking(false);
+        session.activeLlmTurnId(null);
+        session.activeTtsTurnId(null);
+        session.lifecycleState(TurnLifecycleState.IDLE);
     }
 
     /**
@@ -266,6 +367,36 @@ public class VoicePipelineService {
     }
 
     /**
+     * 在静音候选阶段调用 EOU，且同一文本只推理一次，避免每个音频帧重复消耗模型。
+     */
+    private Optional<EouPrediction> maybePredictEou(SessionState session, String turnId, VadDecision vad, Instant now) {
+        if (!eouConfig.enabled() || vad.speech() || session.lastSpeechAt() == null || !session.isCurrentTurn(turnId)) {
+            return Optional.empty();
+        }
+        long silenceMs = Duration.between(session.lastSpeechAt(), now).toMillis();
+        if (silenceMs < eouConfig.minSilenceMs()) {
+            return Optional.empty();
+        }
+        String transcript = session.partialTranscript();
+        if (transcript == null || transcript.isBlank()) {
+            return Optional.empty();
+        }
+        if (session.sameLastEouTranscript(transcript)) {
+            return Optional.of(session.lastEouPrediction());
+        }
+        EouContext context = new EouContext(
+                session.sessionId(),
+                turnId,
+                transcript,
+                eouConfig.language(),
+                silenceMs
+        );
+        EouPrediction prediction = eouDetector.predict(context);
+        session.eouPrediction(transcript, prediction);
+        return Optional.of(prediction);
+    }
+
+    /**
      * 使用会话的当前 turn 发布状态迁移事件。
      */
     private void publishState(SessionState session, WebSocketSession ws, TurnLifecycleState state, String reason) {
@@ -275,8 +406,8 @@ public class VoicePipelineService {
     /**
      * 所有打断入口统一经过这里，确保业务 hook 能观察到新 turnId。
      */
-    private long interruptWithHooks(SessionState session, WebSocketSession ws, String reason) {
-        long newTurnId = interruptionManager.interrupt(session, ws, reason);
+    private String interruptWithHooks(SessionState session, WebSocketSession ws, String reason) {
+        String newTurnId = interruptionManager.interrupt(session, ws, reason);
         hooks.forEach(hook -> hook.onInterrupted(session, ws, newTurnId, reason));
         return newTurnId;
     }

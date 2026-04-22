@@ -26,15 +26,15 @@ public class InterruptionManager {
     /**
      * 失效旧 turn、停止播报，并开启新的用户 turn。
      */
-    public long interrupt(SessionState session, WebSocketSession ws, String reason) {
-        long oldTurnId = session.currentTurnId();
+    public String interrupt(SessionState session, WebSocketSession ws, String reason) {
+        String oldTurnId = session.currentTurnId();
         session.invalidateTurn(oldTurnId);
         session.interrupted(true);
         session.agentSpeaking(false);
         session.lifecycleState(TurnLifecycleState.INTERRUPTED);
         dispatcher.send(ws, AgentEvent.of(EventType.playback_stop, session.sessionId(), oldTurnId, new ReasonPayload(reason)));
         dispatcher.send(ws, AgentEvent.of(EventType.turn_interrupted, session.sessionId(), oldTurnId, new ReasonPayload(reason)));
-        long newTurnId = session.nextTurnId();
+        String newTurnId = session.nextTurnId();
         session.lifecycleState(TurnLifecycleState.USER_PRE_SPEECH);
         dispatcher.send(ws, AgentEvent.of(EventType.state_changed, session.sessionId(), newTurnId, new StateChangedPayload(TurnLifecycleState.USER_PRE_SPEECH.name(), null)));
         return newTurnId;

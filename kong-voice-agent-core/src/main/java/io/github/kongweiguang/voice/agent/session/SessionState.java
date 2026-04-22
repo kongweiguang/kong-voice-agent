@@ -5,17 +5,21 @@ import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapterFactory;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.audio.CircularByteBuffer;
 import io.github.kongweiguang.voice.agent.audio.PreRollBuffer;
+import io.github.kongweiguang.voice.agent.eou.EouConfig;
+import io.github.kongweiguang.voice.agent.eou.EouPrediction;
 import io.github.kongweiguang.voice.agent.turn.EndpointingPolicy;
 import io.github.kongweiguang.voice.agent.turn.TurnManager;
+import io.github.kongweiguang.voice.agent.util.IdUtils;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -34,10 +38,10 @@ public class SessionState {
     private final String sessionId;
 
     /**
-     * 当前活跃 turnId，0 表示尚未创建用户 turn。
+     * 当前活跃 turnId，null 表示尚未创建用户 turn。
      */
     @Getter(AccessLevel.NONE)
-    private final AtomicLong currentTurnId = new AtomicLong();
+    private final AtomicReference<String> currentTurnId = new AtomicReference<>();
 
     /**
      * 保存最近一段 PCM 音频，便于后续调试或扩展回放。
@@ -62,7 +66,7 @@ public class SessionState {
     /**
      * 已失效 turn 集合，用于异步回调发布前的过期判断。
      */
-    private final Set<Long> invalidTurns = ConcurrentHashMap.newKeySet();
+    private final Set<String> invalidTurns = ConcurrentHashMap.newKeySet();
     /**
      * turn 切换会同时重置多项状态，使用显式锁保证这些变更整体可见。
      */
@@ -100,19 +104,19 @@ public class SessionState {
     private volatile Instant lastSpeechAt;
 
     /**
-     * 当前活跃 ASR turnId，-1 表示未开始。
+     * 当前活跃 ASR turnId，null 表示未开始。
      */
-    private volatile long activeAsrTurnId = -1;
+    private volatile String activeAsrTurnId;
 
     /**
-     * 当前活跃 LLM turnId，-1 表示未开始。
+     * 当前活跃 LLM turnId，null 表示未开始。
      */
-    private volatile long activeLlmTurnId = -1;
+    private volatile String activeLlmTurnId;
 
     /**
-     * 当前活跃 TTS turnId，-1 表示未开始。
+     * 当前活跃 TTS turnId，null 表示未开始。
      */
-    private volatile long activeTtsTurnId = -1;
+    private volatile String activeTtsTurnId;
 
     /**
      * Agent 是否正在播报，插话打断依赖该标记。
@@ -125,30 +129,51 @@ public class SessionState {
     private volatile boolean interrupted;
 
     /**
+     * 最近一次参与 EOU 推理的 ASR 文本，用于避免同一文本重复推理。
+     */
+    private volatile String lastEouTranscript = "";
+
+    /**
+     * 最近一次 EOU 推理结果。
+     */
+    private volatile EouPrediction lastEouPrediction;
+
+    /**
      * 创建一个 WebSocket 连接独占的运行态。
      */
     public SessionState(String sessionId, AudioFormatSpec format, StreamingAsrAdapterFactory asrAdapterFactory) {
+        this(sessionId, format, asrAdapterFactory, new EouConfig(true, null, null, null, true, 0.5, 500, 1600, 300, "zh"));
+    }
+
+    /**
+     * 创建一个 WebSocket 连接独占的运行态，并绑定 endpointing 配置。
+     */
+    public SessionState(String sessionId, AudioFormatSpec format, StreamingAsrAdapterFactory asrAdapterFactory, EouConfig eouConfig) {
         this.sessionId = sessionId;
         this.pcmRingBuffer = new CircularByteBuffer(format.bytesForMs(30_000));
         this.preRollBuffer = new PreRollBuffer(format, 400);
         this.asrAdapter = asrAdapterFactory.create(sessionId, format);
-        this.turnManager = new TurnManager(new EndpointingPolicy());
+        this.turnManager = new TurnManager(new EndpointingPolicy(eouConfig));
     }
 
     /**
      * 启动新的用户 turn，并在旧 turn 存在时将其失效。
      */
-    public long nextTurnId() {
+    public String nextTurnId() {
         turnLock.lock();
         try {
-            long previous = currentTurnId.get();
-            if (previous > 0) {
+            String previous = currentTurnId.get();
+            if (previous != null) {
                 invalidTurns.add(previous);
             }
+            String next = IdUtils.snowflakeIdStr();
             partialTranscript = "";
             finalTranscript = "";
+            lastEouTranscript = "";
+            lastEouPrediction = null;
             interrupted = false;
-            return currentTurnId.incrementAndGet();
+            currentTurnId.set(next);
+            return next;
         } finally {
             turnLock.unlock();
         }
@@ -157,15 +182,17 @@ public class SessionState {
     /**
      * 保护每个异步回调，避免过期 ASR/LLM/TTS 输出泄漏。
      */
-    public boolean isCurrentTurn(long turnId) {
-        return currentTurnId.get() == turnId && !invalidTurns.contains(turnId);
+    public boolean isCurrentTurn(String turnId) {
+        return turnId != null && Objects.equals(currentTurnId.get(), turnId) && !invalidTurns.contains(turnId);
     }
 
     /**
      * 标记某个 turn 不再允许发布下游事件。
      */
-    public void invalidateTurn(long turnId) {
-        invalidTurns.add(turnId);
+    public void invalidateTurn(String turnId) {
+        if (turnId != null) {
+            invalidTurns.add(turnId);
+        }
     }
 
     /**
@@ -177,6 +204,8 @@ public class SessionState {
         preRollBuffer.clear();
         partialTranscript = "";
         finalTranscript = "";
+        lastEouTranscript = "";
+        lastEouPrediction = null;
         lifecycleState = TurnLifecycleState.IDLE;
         agentSpeaking = false;
         interrupted = false;
@@ -193,8 +222,15 @@ public class SessionState {
     /**
      * 返回当前活跃 turnId。
      */
-    public long currentTurnId() {
+    public String currentTurnId() {
         return currentTurnId.get();
+    }
+
+    /**
+     * 判断当前会话是否已经创建用户 turn。
+     */
+    public boolean hasCurrentTurn() {
+        return currentTurnId.get() != null;
     }
 
     /**
@@ -209,6 +245,22 @@ public class SessionState {
      */
     public void finalTranscript(String finalTranscript) {
         this.finalTranscript = finalTranscript == null ? "" : finalTranscript;
+    }
+
+    /**
+     * 缓存当前 turn 的 EOU 推理结果。
+     */
+    public void eouPrediction(String transcript, EouPrediction prediction) {
+        this.lastEouTranscript = transcript == null ? "" : transcript.trim();
+        this.lastEouPrediction = prediction;
+    }
+
+    /**
+     * 判断指定文本是否可以复用最近一次 EOU 推理结果。
+     */
+    public boolean sameLastEouTranscript(String transcript) {
+        String normalized = transcript == null ? "" : transcript.trim();
+        return !normalized.isEmpty() && normalized.equals(lastEouTranscript) && lastEouPrediction != null;
     }
 
     /**

@@ -83,6 +83,6 @@ public interface VoicePipelineHook {
      * @param newTurnId 打断后分配的新 turnId
      * @param reason 打断原因，例如客户端主动打断或用户重新开口
      */
-    default void onInterrupted(SessionState session, WebSocketSession ws, long newTurnId, String reason) {
+    default void onInterrupted(SessionState session, WebSocketSession ws, String newTurnId, String reason) {
     }
 }

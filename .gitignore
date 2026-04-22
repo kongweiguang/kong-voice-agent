@@ -1,4 +1,10 @@
 target/
+node_modules/
+ui/dist/
+ui/node_modules/
+ui/.vite/
+ui/.turbo/
+ui/vite-dev*.log
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
@@ -38,3 +44,7 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### External model assets ###
+models/livekit-turn-detector/*.onnx
+models/livekit-turn-detector/tokenizer.json

@@ -1,6 +1,7 @@
 package io.github.kongweiguang.voice.agent.session;
 
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
+import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.support.NoopStreamingAsrAdapter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -18,6 +19,7 @@ import java.security.Principal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,7 +40,8 @@ class SessionManagerTest {
     void createsIndependentSessionsAndDestroysThem() {
         SessionManager manager = new SessionManager(
                 (sessionId, format) -> new NoopStreamingAsrAdapter(),
-                AudioFormatSpec.DEFAULT
+                AudioFormatSpec.DEFAULT,
+                eouConfig()
         );
         WebSocketSession ws1 = new StubWebSocketSession();
         WebSocketSession ws2 = new StubWebSocketSession();
@@ -46,15 +49,45 @@ class SessionManagerTest {
         SessionState first = manager.create(ws1);
         SessionState second = manager.create(ws2);
 
+        assertThat(first.sessionId()).startsWith("sess_");
         assertThat(first.sessionId()).isNotEqualTo(second.sessionId());
-        assertThat(first.nextTurnId()).isEqualTo(1);
-        assertThat(first.nextTurnId()).isEqualTo(2);
+        assertThat(manager.get(first.sessionId())).containsSame(first);
+        assertThat(manager.getWebSocketSession(first.sessionId())).containsSame(ws1);
+        assertThat(manager.get(ws1)).containsSame(first);
+        String firstTurnId = first.nextTurnId();
+        String secondTurnId = first.nextTurnId();
+        assertThat(firstTurnId).containsOnlyDigits();
+        assertThat(secondTurnId).containsOnlyDigits().isNotEqualTo(firstTurnId);
+        assertThat(first.isCurrentTurn(firstTurnId)).isFalse();
+        assertThat(first.isCurrentTurn(secondTurnId)).isTrue();
         assertThat(manager.activeCount()).isEqualTo(2);
 
         manager.destroy(ws1);
 
         assertThat(manager.get(ws1)).isEmpty();
+        assertThat(manager.get(first.sessionId())).isEmpty();
+        assertThat(manager.getWebSocketSession(first.sessionId())).isEmpty();
         assertThat(manager.activeCount()).isEqualTo(1);
+    }
+
+    /**
+     * 保护握手阶段写入的 sessionId 能建立辅助索引，方便其他业务按该 id 找回 WebSocket 连接。
+     */
+    @Test
+    @DisplayName("使用握手属性中的 sessionId 建立查询索引")
+    void usesHandshakeSessionIdAsLookupIndex() {
+        SessionManager manager = new SessionManager(
+                (sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig()
+        );
+        WebSocketSession ws = new StubWebSocketSession(Map.of("sessionId", "sess_custom"));
+
+        SessionState state = manager.create(ws);
+
+        assertThat(state.sessionId()).isEqualTo("sess_custom");
+        assertThat(manager.get("sess_custom")).containsSame(state);
+        assertThat(manager.getWebSocketSession("sess_custom")).containsSame(ws);
     }
 
     /**
@@ -68,7 +101,7 @@ class SessionManagerTest {
         SessionManager manager = new SessionManager((sessionId, format) -> {
             asrFormat.set(format);
             return new NoopStreamingAsrAdapter();
-        }, configuredFormat);
+        }, configuredFormat, eouConfig());
 
         manager.create(new StubWebSocketSession());
 
@@ -80,6 +113,15 @@ class SessionManagerTest {
      */
     private static final class StubWebSocketSession implements WebSocketSession {
         private final String id = UUID.randomUUID().toString();
+        private final Map<String, Object> attributes;
+
+        private StubWebSocketSession() {
+            this(Map.of());
+        }
+
+        private StubWebSocketSession(Map<String, Object> attributes) {
+            this.attributes = new ConcurrentHashMap<>(attributes);
+        }
 
         @Override
         public String getId() {
@@ -98,7 +140,7 @@ class SessionManagerTest {
 
         @Override
         public Map<String, Object> getAttributes() {
-            return Map.of();
+            return attributes;
         }
 
         @Override
@@ -160,5 +202,9 @@ class SessionManagerTest {
         @Override
         public void close(CloseStatus status) throws IOException {
         }
+    }
+
+    private EouConfig eouConfig() {
+        return new EouConfig(true, null, null, null, true, 0.5, 500, 1600, 300, "zh");
     }
 }

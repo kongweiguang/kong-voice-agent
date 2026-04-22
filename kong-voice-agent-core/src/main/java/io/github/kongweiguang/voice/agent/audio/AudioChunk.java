@@ -11,7 +11,7 @@ public record AudioChunk(
         /**
          * 音频帧到达时对应的活跃 turnId。
          */
-        long turnId,
+        String turnId,
 
         /**
          * 客户端上传的原始 PCM 字节数据。

@@ -1,25 +1,28 @@
 # Features
 
-这份文档是后续开发的主功能清单。后续推进只维护 `README.md`、`docs/system-state.md`、`docs/features.md` 和 `docs/protocol.md`。
+这份文档是后续开发的主功能清单。后续推进只维护 `README.md`、`docs/architecture.md`、`docs/system-state.md`、`docs/features.md`、`docs/protocol.md` 和 `docs/frontend-integration.md`。
 
 ## 功能总览
 
 | 功能域 | 状态 | 当前实现 | 后续关注 |
 | --- | --- | --- | --- |
 | 工程骨架 | 已实现 | Spring Boot 3、Java 21、Maven 3.9+ 多模块、Maven Enforcer、JDK 虚拟线程执行器、基础日志、可打包 app jar | 按需补 CI / profile |
-| WebSocket 接入 | 已实现 | `/ws/agent` 支持策略注册表驱动的 JSON 控制消息、文本输入、自定义 type 和二进制 PCM | 增加端到端 WebSocket 自动化测试 |
-| Session 与 turnId | 已实现 | 每连接独立 session，维护 current turn 和旧 turn 失效集合 | 丰富并发与断连测试 |
+| 固定账号认证 | 已实现 | `POST /api/auth/login` 使用固定账号签发进程内 token，WebSocket 通过 `/ws/agent?token=<login-token>` 鉴权 | 后续替换真实账号体系、补 token 过期和撤销策略 |
+| WebSocket 接入 | 已实现 | `/ws/agent?token=<login-token>` 支持握手 token 鉴权、策略注册表驱动的 JSON 控制消息、文本输入、自定义 type 和二进制 PCM | 增加端到端 WebSocket 自动化测试 |
+| Session 与 turnId | 已实现 | 每连接独立 session，SessionManager 以 WebSocket id 为主索引并提供业务 sessionId 查询索引，使用雪花 ID 字符串维护 current turn 和旧 turn 失效集合 | 丰富并发与断连测试 |
+| 通用 ID 工具 | 已实现 | `IdUtils` 支持不可预测 session id 和 64 位趋势递增雪花 ID，雪花节点号可通过系统属性或环境变量指定 | 生产多实例部署时显式分配节点号 |
 | 音频基础设施 | 已实现 | PCM s16le 转换、RMS、ring buffer、pre-roll、时长换算，音频格式从 `kong-voice-agent.audio` 绑定到 `AudioFormatSpec` | 增加异常格式校验策略 |
-| VAD | 已实现 | Silero ONNX 加载入口，默认从项目 `models/` 读取，模型缺失时 RMS fallback | 放入真实模型并确认输入签名 |
-| Streaming ASR | 已实现 | 每 session ASR 工厂，app 默认 mock adapter 支持 partial / final | 接入真实流式 ASR |
-| TurnManager / endpointing | 已实现 | 根据 VAD、ASR、时间信息推进状态并 commit turn | 扩展真实噪声场景测试 |
+| VAD | 已实现 | Silero ONNX 加载入口，默认从项目 `models/` 读取，可通过 `kong-voice-agent.onnx` 切换 CUDA GPU，模型缺失时 RMS fallback | 放入真实模型并确认输入签名 |
+| Streaming ASR | 已实现 | 每 session ASR 工厂，app 默认直接对接 DashScope Qwen-ASR；当前同步适配器在音频阶段不生成假 partial | 后续如需更低延迟可替换真实流式 ASR |
+| EOU | 已实现 | 语义 end-of-utterance 扩展点，默认 LiveKit MultilingualModel 风格 ONNX detector，复用 `kong-voice-agent.onnx` 执行设备配置，支持模型缺失 fallback 和业务 Bean 覆盖 | 补入真实 turn detector 模型并按真实 ASR 语言更新阈值 |
+| TurnManager / endpointing | 已实现 | 根据 VAD、ASR、EOU 和时间信息推进状态并 commit turn | 扩展真实噪声场景测试 |
 | Audio ingress 编排 | 已实现 | WebSocket 音频异步进入 VAD + ASR + TurnManager | 增加背压、队列和延迟指标 |
 | LLM 编排 | 已实现 | turn committed + final transcript 后才调用可覆盖 LLM Bean，app 默认 mock | 接入真实 LLM，支持配置切换 |
-| TextChunker / TTS | 已实现 | 文本切句后进入可覆盖 TTS Bean，app 默认 mock，返回 base64 chunk | 接入真实 TTS 与音频格式协商 |
+| TTS 编排 | 已实现 | LLM 非空文本片段直接进入可覆盖 TTS Bean，app 默认直接对接 DashScope Qwen-TTS，返回 base64 chunk | 接入音频格式协商 |
 | Playback / interruption | 已实现 | 播报中用户开口或 interrupt 会停止旧 turn | 增加完整集成测试 |
 | Hook 扩展 | 已实现 | `VoicePipelineHook` 支持观察音频、文本、commit、LLM、TTS、打断节点 | 按业务需要增加可改写上下文的 hook |
 | 协议文档 | 已实现 | 上下行消息和 JSON 示例记录在 `docs/protocol.md`，后端下行 `AgentEvent.payload` 已改为事件专属实体类 | 与前端联调后冻结字段 |
-| 前端联调文档与界面 | 已实现 | `docs/frontend-integration.md` 记录接入方式，`kong-voice-agent-app/frontend-demo.html` 提供静态调试台 | 根据真实前端联调反馈调整 UI 与字段说明 |
+| 前端联调文档与界面 | 已实现 | `docs/frontend-integration.md` 记录接入方式，`ui/` 提供豆包风格 React AI 对话界面并支持麦克风 PCM 上传、TTS 播放队列、过期 turn 丢弃、新对话重建 WebSocket session 和 localStorage 历史快照 | React UI 后续补服务端历史 |
 | README / 状态文档 | 已实现 | 入口说明、系统状态、协议、功能清单齐备 | 每次功能推进同步更新 |
 | 代码注释 | 已实现 | 主源码和测试源码已补充类级、符号级、关键方法和核心约束注释 | 后续新增代码同步补注释 |
 | preemptive | 不支持 | 本版本明确禁止 turn commit 前启动 LLM/TTS | 除非另立版本，否则不实现 |
@@ -32,13 +35,15 @@
 - 根工程通过 Maven Enforcer 固化 Java 21、Maven 3.9+ 和非 SNAPSHOT 依赖基线，避免开源用户在不兼容环境下得到隐晦构建失败。
 - 异步音频处理和 Agent 下游任务使用 JDK 21 虚拟线程执行器；共享状态串行化优先使用 `ReentrantLock`。
 - 根工程 `kong-voice-agent-parent` 通过 `dependencyManagement` 统一管理 Spring Boot、ONNX Runtime 和内部模块版本，并聚合 `kong-voice-agent-core` 和 `kong-voice-agent-app` 两个子模块。
+- `kong-voice-agent-app` 引入 AgentScope BOM 时会先重新导入项目统一的 Spring Boot BOM，避免业务 BOM 将 `spring-boot-autoconfigure` 等平台组件提升到不兼容版本。
 - `kong-voice-agent-core` 模块承载通用语音流水线、协议模型、可替换接口和 hook。
 - `kong-voice-agent-app` 模块承载 Spring Boot 启动入口、运行配置、虚拟线程执行器、默认 mock 能力和业务装配。
-- 依赖包含 WebSocket、Jackson、ONNX Runtime Java、Lombok、Spring Boot Test。
+- 依赖包含 WebSocket、Jackson、ONNX Runtime Java、Lombok、Spring Boot Test；ONNX Runtime artifact 可通过 `-Donnxruntime.artifactId=onnxruntime_gpu` 切换为 GPU 原生包。
 - 应用入口为 `kong-voice-agent-app` 模块的 `VoiceAgentApplication`。
 - 配置文件为 `kong-voice-agent-app/src/main/resources/application.yml`。
 - `mvn test` 和 `mvn clean package` 已通过。
 - 应用可启动，默认端口为 `9877`。
+- 应用模块包含完整 Spring Boot 上下文启动烟测，用于保护自动配置导入和依赖版本一致性。
 
 验收点：
 
@@ -46,9 +51,34 @@
 - `java -jar kong-voice-agent-app/target/kong-voice-agent-app-0.1.jar` 可启动。
 - README 写明启动和验证方式。
 
-### 2. WebSocket 接入
+### 2. 固定账号认证
 
-- WebSocket 路径：`/ws/agent`。
+- 登录接口：`POST /api/auth/login`。
+- 默认固定账号：
+  - `accountId = demo-user`
+  - `username = demo`
+  - `password = demo123456`
+- 固定账号配置位于 `kong-voice-agent.auth.fixed-user`，可通过环境变量覆盖：
+  - `KONG_VOICE_AGENT_AUTH_FIXED_USER_ACCOUNT_ID`
+  - `KONG_VOICE_AGENT_AUTH_FIXED_USER_USERNAME`
+  - `KONG_VOICE_AGENT_AUTH_FIXED_USER_PASSWORD`
+- 登录成功后返回 UUID token、`tokenType=Bearer` 和当前用户身份。
+- token 当前只保存在服务端当前 JVM 进程内存中，服务重启后全部失效。
+- 当前版本不提供 token 持久化、跨实例共享、过期刷新、主动撤销或 WebSocket Bearer Header 鉴权。
+- 账号密码错误时返回 HTTP 401 和 `unauthorized` 错误响应。
+
+验收点：
+
+- 默认账号可登录并返回 token。
+- 环境变量覆盖账号、密码和账号标识后，登录校验使用覆盖值。
+- 错误账号或密码返回 401。
+- 服务重启后旧 token 不再可用。
+- 公开部署不能沿用默认密码。
+
+### 3. WebSocket 接入
+
+- WebSocket 路径：`/ws/agent?token=<login-token>`。
+- 握手阶段通过 query 参数 `token` 校验登录态，缺失或无效时返回 401，不创建 session。
 - JSON 文本消息入口由 `WsTextMessageHandlerRegistry` 按字符串 `type` 分发，内置支持：`ping`、`interrupt`、`audio_end`、`text`。
 - 业务模块可以注册 `WsTextMessageHandler` Bean 新增自定义 type；内置 type 不允许覆盖，重复 type 在启动阶段失败。
 - 二进制消息入口：接收 PCM 音频块。
@@ -62,28 +92,50 @@
 验收点：
 
 - WebSocket 可以连接。
+- 缺少 token 或 token 无效时 WebSocket 握手失败。
 - `ping` 可返回 `pong`。
 - `text` 可触发 `asr_final(source=text)`、`agent_thinking`、`agent_text_chunk` 和 `tts_audio_chunk`。
 - 二进制 PCM 能进入音频处理流程。
 - 自定义上行 JSON type 可通过策略 Bean 扩展，且不会覆盖内置协议行为。
 - 断连能触发 session 清理。
 
-### 3. Session 与 turnId
+### 4. Session 与 turnId
 
 - 每个 WebSocket 连接拥有独立 `SessionState`。
+- `SessionManager` 保持以 Spring WebSocket id 作为会话状态主索引，并维护 `sessionId -> wsId` 与 `wsId -> WebSocketSession` 辅助索引，业务模块可通过下行协议中的 `sessionId` 找回当前状态和连接。
 - session 维护 `currentTurnId`、生命周期状态、ASR/LLM/TTS 活跃 turn、音频缓冲、转写文本、打断标记等。
-- 新 turn 通过 `nextTurnId()` 自增。
+- 新 turn 通过 `nextTurnId()` 调用 `IdUtils.snowflakeIdStr()` 生成雪花 ID 字符串，协议侧不承诺从 1 开始自增。
 - 旧 turn 通过 invalid turn 集合失效。
-- 下游异步结果发出前必须调用 `isCurrentTurn(turnId)` 校验。
+- 下游异步结果发出前必须调用 `isCurrentTurn(turnId)` 做字符串相等性校验。
+- `IdUtils` 继续为 session 生成 `sess_` 前缀的不可预测随机 id，避免协议侧依赖可枚举会话标识。
 
 验收点：
 
 - 多连接 session 互不影响。
-- turnId 可自增。
+- 可通过业务 `sessionId` 查询 `SessionState` 和当前 WebSocket 连接。
+- turnId 为非空数字字符串且连续两轮不重复。
 - 旧 session 可销毁。
 - interruption 后旧 turn 结果会被丢弃。
 
-### 4. 音频基础设施
+### 4.1 通用 ID 工具
+
+- `IdUtils.snowflakeId()` 支持生成 64 位趋势递增雪花 ID。
+- 默认位布局为毫秒时间戳、10 位节点号和 12 位同毫秒序列号，单节点每毫秒最多生成 4096 个 ID。
+- 自定义纪元为 2024-01-01 00:00:00 UTC，保持生成结果为正整数并覆盖当前项目可预期生命周期。
+- 默认节点号优先读取 JVM 系统属性 `kong.voice-agent.snowflake.node-id`，其次读取环境变量 `KONG_VOICE_AGENT_SNOWFLAKE_NODE_ID`。
+- 未配置节点号时当前进程随机选择 0 到 1023 之间的节点号，适合本地单机验证；生产多实例部署应显式分配节点号。
+- `IdUtils.snowflakeGenerator(long nodeId)` 可创建指定节点号的独立生成器，便于业务模块按实例或租户边界管理 ID 空间。
+- 发生系统时钟回拨时生成器会抛出异常，不继续生成可能破坏趋势递增和唯一性的 ID。
+
+验收点：
+
+- 同一生成器连续生成的雪花 ID 唯一且递增。
+- 同一毫秒内通过序列号区分 ID。
+- 同毫秒序列号耗尽后等待下一毫秒再生成。
+- 非法节点号会被拒绝。
+- 系统时钟回拨会被明确拦截。
+
+### 5. 音频基础设施
 
 - 默认输入格式：16kHz / mono / 16-bit PCM little-endian。
 - 音频格式运行时从 `kong-voice-agent.audio` 读取，默认上传块为 20ms。
@@ -100,13 +152,13 @@
 - PCM little-endian 转换正确。
 - RMS 结果可用于 mock VAD。
 
-### 5. VAD
+### 6. VAD
 
 - `VadEngine` 定义统一接口。
 - `SileroVadEngine` 默认尝试加载项目根目录 `models/silero_vad.onnx`。
 - 打包部署后通过 compose 将项目 `./models/` 映射到容器 `/kong/models/`，并用 `KONG_VOICE_AGENT_VAD_MODEL_PATH=file:/kong/models/silero_vad.onnx` 指定运行时模型路径。
 - 所有模型文件统一放在 `models/` 目录，后续新增模型也复用该目录映射。
-- 模型存在时尝试通过 ONNX Runtime 推理。
+- 模型存在时尝试通过 ONNX Runtime 推理；`kong-voice-agent.onnx.gpu-enabled=true` 时优先注册 CUDA provider，`fallback-to-cpu=true` 时 CUDA 不可用会回退 CPU session。
 - 模型缺失或推理失败时回退到 RMS fallback。
 - `VadDecision` 输出 `speechProbability` 和 `speech` flag。
 
@@ -122,21 +174,21 @@
 - 根据真实模型输入/输出签名固定推理代码。
 - 增加带真实 PCM fixture 的 VAD 测试。
 
-### 6. Streaming ASR
+### 7. Streaming ASR
 
 - `StreamingAsrAdapter` 定义流式 ASR 接口。
 - `StreamingAsrAdapterFactory` 负责为每个 session 创建独立 ASR 实例，业务模块可通过同类型 Bean 覆盖默认工厂。
-- `kong-voice-agent-app` 模块的 `MockStreamingAsrAdapter` 按音频时长生成 partial transcript。
-- turn commit 后生成 final transcript。
+- `kong-voice-agent-app` 模块的 `DashScopeStreamingAsrAdapter` 会累计当前 turn 的 PCM。
+- turn commit 后把累计 PCM 包装成 WAV Data URL 并调用 `kong-voice-agent.asr.dashscope.base-url` 的 OpenAI 兼容 `/chat/completions` 接口；API Key 缺失或服务不可用时直接失败，不再生成假转写。
 - 接口保留真实 ASR 替换空间。
 
 验收点：
 
-- 音频进入后能持续返回 `asr_partial`。
+- 当前 DashScope 同步适配器不是实时流式接口，音频进入后不生成假 `asr_partial`。
 - turn commit 或 `audio_end` 后能返回 `asr_final`。
 - 真实 ASR 可通过 adapter 替换，不需要改 WebSocket 层。
 
-### 7. TurnManager 与 Endpointing
+### 8. TurnManager 与 Endpointing
 
 - 状态集合：`IDLE`、`USER_PRE_SPEECH`、`USER_SPEAKING`、`USER_ENDPOINTING`、`USER_TURN_COMMITTED`、`AGENT_THINKING`、`AGENT_SPEAKING`、`INTERRUPTED`。
 - endpointing 默认参数：
@@ -146,36 +198,53 @@
   - `endSilenceMs = 600`
   - `minSpeechMs = 200`
   - `maxTurnMs = 15000`
+- EOU 默认参数：
+  - `enabled = true`
+  - `provider = livekit-multilingual`
+  - `modelPath = file:models/livekit-turn-detector/model_quantized.onnx`
+  - `tokenizerPath = file:models/livekit-turn-detector/tokenizer.json`
+  - `fallbackEnabled = true`
+  - `defaultThreshold = 0.5`
+  - `minSilenceMs = 500`
+  - `maxSilenceMs = 1600`
+- ONNX Runtime 默认参数：
+  - `gpuEnabled = false`
+  - `gpuDeviceId = 0`
+  - `fallbackToCpu = true`
 - TurnManager 接收 VAD、ASR、音频时间信息并推进状态。
+- VAD 检测到静音候选后，优先使用 `EouDetector` 判断当前 ASR 文本是否语义结束；`EOU=false` 时继续等待，超过最大静音窗口后兜底提交。
+- `EouDetector` 是整体 EOU 公开扩展点；默认 LiveKit 实现可通过 `EouHistoryProvider` 按会话读取历史，core 不主动记录业务对话内容。
 - 只有 `USER_TURN_COMMITTED` 后才允许触发 LLM。
 
 验收点：
 
 - 能判断开始说话。
 - 能判断结束说话。
+- 能在 EOU 判断完成后触发 turn committed。
+- 能在 EOU 判断未完成时继续等待用户补充。
 - 能触发 turn committed。
 - committed 前不会调用 LLM。
 - 状态流转已有单元测试覆盖。
 
-### 8. Audio Ingress 编排
+### 9. Audio Ingress 编排
 
 - WebSocket 二进制音频包写入 ring buffer 和 pre-roll buffer。
 - 音频处理通过虚拟线程版 `audioTaskExecutor` 异步执行，避免阻塞 WebSocket IO 线程。
 - 同一 session 的音频块进入 VAD / ASR / TurnManager 前会串行化，保证状态机按音频顺序推进。
 - 每个音频块进入 VAD 和 ASR。
 - 状态变化下发 `state_changed`。
-- ASR partial 下发 `asr_partial`。
+- 流式 ASR 实现可下发 `asr_partial`；当前默认 DashScope Qwen-ASR 同步适配器不生成假 partial。
 - ASR final 下发 `asr_final`。
 
 验收点：
 
 - WebSocket IO 线程不承担耗时 VAD/ASR/turn 处理。
 - 同一连接内音频处理保持顺序，避免异步任务并发打乱 ASR 累计和 endpointing 状态。
-- 能看到 partial transcript。
+- 默认 DashScope Qwen-ASR 同步适配器不生成 partial transcript；替换为真实流式 ASR 后可看到 partial。
 - turn commit 后能看到 final transcript。
 - 状态切换可通过下行事件观察。
 
-### 9. LLM 编排
+### 10. LLM 编排
 
 - `LlmOrchestrator` 定义统一接口。
 - 业务模块可以声明自己的 `LlmOrchestrator` Bean 覆盖 app 默认 mock。
@@ -191,23 +260,26 @@
 - 前端可收到 thinking 和文本 chunk。
 - 旧 turn 的 LLM 结果不会污染当前 turn。
 
-### 10. TextChunker 与 TTS
+### 11. TTS 编排
 
-- `TextChunker` 按句号、逗号、问号、感叹号和长度阈值切句。
-- `TtsOrchestrator` 定义 TTS 接口。
+- `TtsOrchestrator` 定义 TTS 接口，并提供默认流式回调方法，旧的同步实现无需改造也能继续工作。
 - 业务模块可以声明自己的 `TtsOrchestrator` Bean 覆盖 app 默认 mock。
-- `kong-voice-agent-app` 模块的 `MockTtsOrchestrator` 输出模拟音频 chunk。
+- LLM 非空文本片段会提交给 TTS；默认 DashScope 适配器会按 turnId 累计到句子边界或最后一个 chunk，再启动合成。
+- `kong-voice-agent-app` 模块的 `DashScopeTtsOrchestrator` 默认开启 `kong-voice-agent.tts.dashscope.streaming-enabled`，通过 DashScope SSE 流式 multimodal generation 接口逐块读取音频并实时下发；关闭流式后仍按句累计并一次性返回该句音频。API Key 缺失、服务不可用或返回空音频时直接失败。
+- TTS 异常会在流水线边界转换为 `error(code=tts_failed)` 下行事件，并清理当前 turn 的播报状态，避免异常泄漏到 Reactor 订阅回调。
 - 每个 `TtsChunk` 带 `turnId`、`seq`、`isLast`、`audio`、`text`。
 - 下发事件：`tts_audio_chunk`，音频以 base64 放在 payload 中。
 
 验收点：
 
-- agent 文本能被合理切句。
-- mock TTS 能输出可验证音频块。
+- agent 文本片段能直接进入 TTS。
+- 自定义 LLM 输出粒度会决定 TTS 合成粒度。
+- DashScope Qwen-TTS 能输出可验证音频块，流式模式能把同一句音频拆成多个有序 `tts_audio_chunk`。
 - 客户端能持续收到 `tts_audio_chunk`。
+- DashScope Qwen-TTS 返回空音频或适配器抛异常时，客户端能收到 `error(code=tts_failed)`。
 - 旧 turn 音频不会发送。
 
-### 11. Playback 与 Interruption
+### 12. Playback 与 Interruption
 
 - `PlaybackDispatcher` 负责 WebSocket 下行发送。
 - `InterruptionManager` 负责打断流程。
@@ -227,7 +299,7 @@
 - 新 turn 正常开始。
 - interruption 旧 turn 拦截已有单元测试覆盖。
 
-### 12. Hook 扩展
+### 13. Hook 扩展
 
 - `VoicePipelineHook` 位于 `kong-voice-agent-core` 模块。
 - 业务模块可以注册一个或多个 hook Bean。
@@ -240,10 +312,12 @@
 - 文本闭环测试覆盖 hook 的提交、LLM 和 TTS 节点。
 - 未注册 hook 时流水线保持原行为。
 
-### 13. 协议
+### 14. 协议
 
 上行：
 
+- HTTP `POST /api/auth/login`
+- WebSocket 握手 query 参数 `token`
 - 二进制 PCM `audio_chunk`
 - 文本 `interrupt`
 - 文本 `audio_end`
@@ -264,16 +338,17 @@
 - `error`
 - `pong`
 
-协议细节和 JSON 示例维护在 `docs/protocol.md`。服务端上行文本消息按策略注册表处理，未知业务 type 可先进入策略分发边界；下行事件仍保持统一 `payload` JSON 外壳，但 Java 内部已用可由业务自定义实现的 `AgentEventPayload` 及各事件 payload 实体约束字段。
+协议细节和 JSON 示例维护在 `docs/protocol.md`。服务端上行文本消息按策略注册表处理，未知业务 type 可先进入策略分发边界；下行事件仍保持统一 `payload` JSON 外壳，但 Java 内部已用可由业务自定义实现的 `AgentEventPayload` 及各事件 payload 实体约束字段。前端必须先登录再连接 WebSocket，token 当前只做进程内校验。
 
-### 14. 文档与跨轮状态
+### 15. 文档与跨轮状态
 
 - `README.md`：项目入口、启动、验证和约束。
+- `docs/architecture.md`：模块分层、端到端数据流、文本/音频输入路径和打断流程图。
 - `docs/system-state.md`：当前目标、关键约束、结论、待决问题、下一步计划。
 - `docs/features.md`：主功能清单和验收记录。
 - `docs/protocol.md`：WebSocket 协议。
 - `docs/frontend-integration.md`：前端 WebSocket、文本、音频和事件处理对接说明。
-- `kong-voice-agent-app/frontend-demo.html`：静态前端联调界面，支持文本、麦克风 PCM、心跳、打断和事件日志。
+- `ui/`：React 19 + TypeScript 5.9 + Vite 7 + React Router 7 + Shadcn UI / Radix UI + Tailwind CSS 4 + Lucide React 前端对话界面，使用 pnpm 管理依赖；当前采用豆包风格的产品化聊天布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聚焦聊天区与底部固定输入框支持固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效；每次新建对话都会重建 WebSocket 连接，使一个前端对话对应一个后端 session；会话列表和消息快照保存到浏览器 `localStorage`。
 
 后续修改规则：
 
@@ -283,7 +358,7 @@
 - 改变目标、约束、待决问题或下一步计划时，同步更新 `docs/system-state.md`。
 - 不再使用单独的待办文件。
 
-### 15. 代码注释
+### 16. 代码注释
 
 - 主源码已补充模块职责、接口边界、字段、常量、枚举值、record 组件、配置 Bean 和关键方法注释。
 - 异步处理、`turnId` 校验、turn commit 边界、interruption 等核心约束已在代码中标注。
@@ -325,10 +400,13 @@
 - turn commit 后才进入 LLM。
 - interruption 时旧 turn 被丢弃。
 - WebSocket 端到端事件顺序。
+- 登录接口、固定账号环境变量覆盖和 WebSocket token 握手失败路径。
 - 协议解析和异常输入。
 - 配置默认值与构建基线。
 - 公开扩展点的默认行为和覆盖行为。
 - 测试类需要按领域使用包名、`@Tag` 和 `@DisplayName` 分类，方便 IDE、Maven 和 CI 查看。
+- 真实模型集成测试需要默认不影响 `mvn test`；需要外置模型文件的用例使用 `@Tag("model")` 并通过显式系统属性开启。
+- 严格 CUDA 测试需要额外使用 `@Tag("cuda")` 和显式系统属性开启，并关闭 CPU fallback，避免误把 CPU 回退当作 CUDA 验证通过。
 
 当前已覆盖：
 
@@ -355,15 +433,17 @@
 - 不允许在 turn committed 前启动 TTS。
 - 不允许旧 turn 的异步结果继续影响当前 turn。
 - 不允许阻塞 WebSocket 收包线程。
+- 不允许未携带有效登录 token 的 WebSocket 连接创建 session。
 
 ## 最终验收
 
 ### 闭环验收
 
-- [x] 客户端上传 PCM 后，后端可实时输出 partial transcript。
+- [x] 客户端上传 PCM 后，后端可在 turn commit 后通过 DashScope Qwen-ASR 输出 final transcript。
 - [x] 用户说完一句后，后端可正确识别 turn committed。
 - [x] final transcript 送入 LLM。
 - [x] 客户端直接发送文本后，后端可创建 committed turn 并进入 LLM/TTS。
+- [x] 前端先登录获取 token，再通过 `/ws/agent?token=<login-token>` 连接 WebSocket。
 - [x] LLM 文本送入 TTS。
 - [x] TTS 音频流回传客户端播放。
 - [x] Agent 播报中用户重新说话，系统可成功打断旧播报。
@@ -371,6 +451,8 @@
 ### 额外验收
 
 - [x] README 完整。
+- [x] 架构和端到端数据流图已整理到 `docs/architecture.md`。
+- [x] `ui/` React 对话界面可以通过 `pnpm lint` 和 `pnpm build` 验证。
 - [x] mock 模式可独立运行。
 - [x] 目录结构清晰。
 - [x] 后续替换真实 ASR / LLM / TTS 的改动面尽量小。
@@ -382,3 +464,4 @@
 3. 增加真实 ASR、LLM、TTS 的业务模块 Bean 实现。
 4. 为真实服务接入定义 adapter 配置、超时、重试和错误事件。
 5. 根据前端联调结果决定下行字段继续使用 `payload` 外壳还是平铺。
+6. 为 React UI 补充服务端历史会话持久化和跨设备同步。

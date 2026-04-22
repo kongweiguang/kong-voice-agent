@@ -16,7 +16,7 @@ Kong Voice Agent 是一个面向生产场景设计的 Java Voice Agent 后端框
 - VAD：优先加载 `models/silero_vad.onnx`，模型不可用时自动回退到 RMS fallback
 - ASR / LLM / TTS：应用模块默认提供 DashScope Qwen-ASR / Qwen-TTS 与应用侧 LLM 实现，可通过 Spring Bean 替换
 - 打断：支持客户端主动 `interrupt`，也支持 Agent 播报中用户重新说话触发打断
-- React UI：`ui/` 使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm，提供豆包风格的产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、底部固定输入、麦克风 PCM 输入、发送/打断一体主按钮、连接、TTS 自动播放和文字区播报动效；每次新建对话都会重建 WebSocket 连接，并由后端创建新的 session，会话列表和消息快照会写入浏览器 `localStorage`
+- React UI：`ui/` 使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm，提供豆包风格的产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、底部固定输入、麦克风 PCM 输入、发送/打断一体主按钮、连接、TTS 自动播放和文字区播报动效；每个前端会话拥有独立 WebSocket，多个会话连接可同时存在，切换会话不会断开其他在线会话；会话列表和消息快照会写入浏览器 `localStorage`
 
 ## 环境要求
 
@@ -104,7 +104,7 @@ pnpm dev
 http://localhost:5173/
 ```
 
-页面左侧是轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧是产品化聊天区，首屏会展示欢迎态和示例问题，底部固定输入框使用同一个主按钮负责发送和打断：空闲时显示发送，发送后立即切换为打断。使用默认账号 `demo` / `demo123456` 登录后，在左侧连接状态区点击连接，页面会通过 `ws://localhost:9877/ws/agent?token=<login-token>` 建立 WebSocket；每次点击“新对话”都会关闭旧 WebSocket 并立即新建连接，因此一个前端对话只对应一个后端 session。React UI 会把会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 写入浏览器 `localStorage`，刷新页面后可回看本地历史；切换历史会话只恢复本地记录，不复用已关闭的后端连接。随后可直接发送文本，也可以点击输入框左侧麦克风按钮开始采集，页面会把浏览器音频重采样为 16kHz 单声道 PCM16 并以二进制帧发送，停止录音时自动发送 `audio_end`；收到回复后可查看流式 Agent 文本、自动播放 TTS 音频、在助手文字区查看播报动效，或切换日间/夜间主题。
+页面左侧是轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧是产品化聊天区，首屏会展示欢迎态和示例问题，底部固定输入框使用同一个主按钮负责发送和打断：空闲时显示发送，发送后立即切换为打断。使用默认账号 `demo` / `demo123456` 登录后，在左侧连接状态区点击连接，页面会通过 `ws://localhost:9877/ws/agent?token=<login-token>` 为当前会话建立 WebSocket；点击“新对话”会创建新的前端会话并为它打开新的后端 session，不会关闭其他仍在线的会话连接。React UI 会把会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 写入浏览器 `localStorage`，刷新页面后可回看本地历史；切换会话会恢复该会话的本地记录，并在连接仍在线时继续复用原 WebSocket。随后可直接发送文本，也可以点击输入框左侧麦克风按钮开始采集，页面会把浏览器音频重采样为 16kHz 单声道 PCM16 并以二进制帧发送，停止录音时自动发送 `audio_end`；收到回复后可查看流式 Agent 文本、自动播放 TTS 音频、在助手文字区查看播报动效，或切换日间/夜间主题。
 
 React UI 默认读取：
 
@@ -403,7 +403,7 @@ public EouDetector customEouDetector() {
 
 @Bean
 public EouHistoryProvider eouHistoryProvider(ChatHistoryService chatHistoryService) {
-    return (conversationId, maxTurns) -> chatHistoryService.recentTurns(conversationId, maxTurns);
+    return (sessionId, maxTurns) -> chatHistoryService.recentTurns(sessionId, maxTurns);
 }
 ```
 

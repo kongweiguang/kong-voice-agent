@@ -14,7 +14,7 @@
 
 工程当前采用 Maven 3.9+ 多模块结构：`kong-voice-agent-core` 是公共可复用语音能力模块，`kong-voice-agent-app` 是包含 Spring Boot 启动类、默认 mock 能力和业务装配的应用模块。业务侧通过注册同类型 Bean 覆盖默认 ASR、VAD、EOU、LLM、TTS，通过 `VoicePipelineHook` 挂接自定义业务逻辑。项目面向 GitHub 开源维护，构建和代码风格优先服务长期可维护性、健壮性和扩展性。
 
-仓库根目录新增 `ui/` React 前端工程，使用 pnpm 管理依赖，技术栈为 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4 和 Lucide React。当前界面采用豆包风格的产品化 AI 对话布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聊天区包含欢迎态、示例问题和底部固定输入框，支持日间/夜间主题、固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效。前端约定一个对话对应一条 WebSocket 连接和一个后端 session，点击“新对话”会关闭旧连接并重建连接；会话列表、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`。
+仓库根目录新增 `ui/` React 前端工程，使用 pnpm 管理依赖，技术栈为 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4 和 Lucide React。当前界面采用豆包风格的产品化 AI 对话布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聊天区包含欢迎态、示例问题和底部固定输入框，支持日间/夜间主题、固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效。前端约定一个对话对应一条 WebSocket 连接和一个后端 session，多个会话连接可同时存在；点击“新对话”会为新会话建立新连接，切换会话不会关闭其他在线连接；会话列表、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`。
 
 当前 WebSocket 已加入登录前置流程：客户端先调用 `POST /api/auth/login` 使用固定账号换取 token，再连接 `/ws/agent?token=<login-token>`。token 只保存在当前服务进程内存中，服务重启后全部失效。
 
@@ -74,7 +74,7 @@
 - DashScope Qwen-TTS 适配器已按 turnId 缓冲 LLM 片段，累计到句子边界或最后一个 chunk 后再合成；默认开启 DashScope SSE 流式 TTS，逐块读取音频并下发，关闭流式后仍按句非流式合成，避免短音频片段导致播放断续
 - React UI 已对齐当前协议：按 `turnId` 过滤过期文本与音频，消费 `tts_audio_chunk.payload.audioBase64` 并在打断、切换 turn 或新建对话时清空旧播放队列
 - 新增根目录 `ui/` 前端工程，采用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm
-- `ui/` 已实现豆包风格产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、首屏欢迎态、底部固定输入、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、日间/夜间主题切换、固定账号登录、WebSocket 连接、Agent 文本 chunk 聚合、TTS 播放队列、播报动效、新对话重建 WebSocket session 和 `localStorage` 会话快照
+- `ui/` 已实现豆包风格产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、首屏欢迎态、底部固定输入、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、日间/夜间主题切换、固定账号登录、WebSocket 连接、Agent 文本 chunk 聚合、TTS 播放队列、播报动效、多前端会话 WebSocket 并存和 `localStorage` 会话快照
 - `ui/` 已通过 `pnpm lint` 和 `pnpm build` 验证，并生成 `pnpm-lock.yaml`
 
 ## 关键约束

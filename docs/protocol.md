@@ -413,7 +413,7 @@ $env:DASHSCOPE_API_KEY="sk-xxxx"
 
 ## 前端联调界面
 
-面向前端接入的字段说明、状态建议和调试步骤维护在 `docs/frontend-integration.md`。仓库根目录的 `ui/` React 界面提供当前前端联调入口，流程是先登录，再连接 `/ws/agent?token=<login-token>`，随后发送文本、心跳、打断和麦克风 PCM。一个前端对话对应一条 WebSocket 连接和一个后端 session，点击“新对话”应关闭旧连接并建立新连接；React UI 会把会话列表和消息快照保存到浏览器 `localStorage`，但这只是本地回看记录，不代表后端 session 可跨连接复用。
+面向前端接入的字段说明、状态建议和调试步骤维护在 `docs/frontend-integration.md`。仓库根目录的 `ui/` React 界面提供当前前端联调入口，流程是先登录，再连接 `/ws/agent?token=<login-token>`，随后发送文本、心跳、打断和麦克风 PCM。一个前端对话对应一条 WebSocket 连接和一个后端 session，点击“新对话”会建立新的连接和后端 session，已有在线会话连接不会被关闭；React UI 会把会话列表和消息快照保存到浏览器 `localStorage`，切换会话时按前端会话 id 找回仍在线的 WebSocket 或展示本地快照。
 
 ## 不支持项
 

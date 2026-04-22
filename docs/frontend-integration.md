@@ -2,7 +2,7 @@
 
 这份文档面向 Web 前端联调，说明如何连接 voice agent 后端、发送文本或音频、处理下行事件，以及如何使用 `ui/` React 界面做手工验证。
 
-仓库根目录的 `ui/` 已提供新的 React 对话界面，使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm。该界面参考豆包聊天页采用产品化 AI 对话布局：左侧为轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧为聚焦聊天区，首屏展示欢迎态和示例问题，底部固定输入框使用同一个主按钮支持文本发送和打断，空闲时显示发送，发送后立即切换为打断；输入框左侧麦克风按钮会采集浏览器音频、重采样为 16kHz 单声道 PCM16 后通过 WebSocket 二进制帧发送，停止录音时自动发送 `audio_end`；收到 `tts_audio_chunk` 后会按 `turnId` 入队播放，并在对应助手文字区域展示播报动效。React UI 中一个前端对话就是一条 WebSocket 连接，也就是一个后端 session；点击“新对话”会关闭旧连接并重建连接。会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`，刷新页面后可回看本地历史。
+仓库根目录的 `ui/` 已提供新的 React 对话界面，使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm。该界面参考豆包聊天页采用产品化 AI 对话布局：左侧为轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧为聚焦聊天区，首屏展示欢迎态和示例问题，底部固定输入框使用同一个主按钮支持文本发送和打断，空闲时显示发送，发送后立即切换为打断；输入框左侧麦克风按钮会采集浏览器音频、重采样为 16kHz 单声道 PCM16 后通过 WebSocket 二进制帧发送，停止录音时自动发送 `audio_end`；收到 `tts_audio_chunk` 后会按 `turnId` 入队播放，并在对应助手文字区域展示播报动效。React UI 中一个前端对话就是一条 WebSocket 连接，也就是一个后端 session；点击“新对话”会创建新的前端会话并打开新的 WebSocket，已有在线会话不会被关闭，切换会话时会复用仍在线的连接。会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`，刷新页面后可回看本地历史。
 
 ## 接入信息
 
@@ -48,7 +48,7 @@ pnpm dev
 4. 使用默认账号 `demo` / `demo123456` 登录。
 5. 登录成功后，在左侧连接状态区点击连接。
 6. 发送文本 `你好，介绍一下你自己`。
-7. 确认页面展示用户气泡、助手流式文本和 TTS 播报动效；点击“新对话”后应看到旧连接断开并建立新的 WebSocket session。
+7. 确认页面展示用户气泡、助手流式文本和 TTS 播报动效；点击“新对话”后应看到新的 WebSocket session 建立，旧会话连接保持在线。
 8. 刷新浏览器页面，确认左侧仍能看到本地保存的历史会话和消息快照。
 
 后端默认会把音频 turn 的 final 阶段提交到 DashScope Qwen-ASR，并把 Agent 文本提交到 DashScope Qwen-TTS。启动应用前需要设置 `DASHSCOPE_API_KEY` 或 `KONG_VOICE_AGENT_DASHSCOPE_API_KEY`。服务不可用、API Key 缺失或返回空音频时会明确失败，不再回退到假数据；TTS 失败会下发 `error(code=tts_failed)`，前端应结束当前 turn 的思考或播放状态。
@@ -76,7 +76,7 @@ VITE_AGENT_HTTP_BASE=http://localhost:9877
 VITE_AGENT_WS_BASE=ws://localhost:9877
 ```
 
-如果后端端口或域名不同，复制为 `ui/.env.local` 后修改。当前 React UI 已实现固定账号登录、WebSocket 连接、`ping`、`text`、`interrupt`、麦克风 PCM 二进制上传、停止录音自动 `audio_end`、`asr_final` 用户气泡、`agent_thinking`、`agent_text_chunk` 聚合显示、`tts_audio_chunk` 播放队列和播报动效，并按 `turnId` 更新当前会话；“新对话”会关闭旧 WebSocket 并建立新 WebSocket，让后端创建新的 session。历史会话只作为浏览器本地快照存储在 `localStorage`，切换历史项不会复用已经关闭的后端连接。
+如果后端端口或域名不同，复制为 `ui/.env.local` 后修改。当前 React UI 已实现固定账号登录、WebSocket 连接、`ping`、`text`、`interrupt`、麦克风 PCM 二进制上传、停止录音自动 `audio_end`、`asr_final` 用户气泡、`agent_thinking`、`agent_text_chunk` 聚合显示、`tts_audio_chunk` 播放队列和播报动效，并按 `turnId` 更新当前会话；“新对话”会建立新的 WebSocket，让后端创建新的 session，同时保留其他会话已建立的 WebSocket。历史会话只作为浏览器本地快照存储在 `localStorage`，切换历史项时如果对应连接仍在线会继续复用。
 
 ## 上行消息
 
@@ -283,7 +283,7 @@ interface AgentEventEnvelope<T = Record<string, unknown>> {
 - `agentText`：当前 Agent 文本聚合。
 - `audioQueue`：当前 turn 的 TTS 音频队列。
 
-`ui/` 的 React 实现当前使用组件级 `useState` 管理登录态、连接态、当前 `sessionId`、当前 `turnId`、消息列表和历史摘要，不引入全局状态库。一个前端对话对应一条 WebSocket 连接和一个后端 session；浏览器本地通过 `localStorage` 保存历史会话快照，key 为 `kong-voice-agent.conversations.v1` 和 `kong-voice-agent.active-conversation.v1`。后续如果接入真实服务端会话列表，应继续保持按 `sessionId` 和 `turnId` 隔离 UI 更新，并在切换会话时重建或恢复对应连接。
+`ui/` 的 React 实现当前使用组件级 `useState` 管理登录态、按前端会话隔离的连接态、当前 `sessionId`、当前 `turnId`、消息列表和历史摘要，不引入全局状态库。一个前端对话对应一条 WebSocket 连接和一个后端 session；浏览器本地通过 `localStorage` 保存历史会话快照，key 为 `kong-voice-agent.conversations.v1` 和 `kong-voice-agent.active-conversation.v1`。后续如果接入真实服务端会话列表，应继续保持按 `sessionId` 和 `turnId` 隔离 UI 更新，并在切换会话时复用仍在线的连接或为离线会话重新连接。
 
 ## JavaScript 最小示例
 
@@ -357,5 +357,5 @@ function sendText(text) {
 - [ ] 收到新 `turnId` 后旧音频不会继续播放。
 - [ ] React UI 可以通过 `pnpm dev` 启动，默认访问 `http://localhost:5173/`。
 - [ ] React UI 可以登录、连接、发送文本、聚合 Agent 文本 chunk、自动播放 TTS、展示播报动效，并切换日间/夜间主题。
-- [ ] React UI 点击“新对话”后会关闭旧 WebSocket 并建立新连接，下行 `sessionId` 应变为新的后端 session。
+- [ ] React UI 点击“新对话”后会建立新的 WebSocket，下行 `sessionId` 应变为新的后端 session，旧会话连接不应被关闭。
 - [ ] React UI 刷新页面后能从 `localStorage` 恢复会话列表和消息快照。

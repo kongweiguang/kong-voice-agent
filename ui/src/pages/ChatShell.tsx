@@ -144,8 +144,6 @@ export function ChatShell() {
   const [login, setLogin] = useState<LoginResponse | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationRecord[]>(initialConversations);
   const [activeConversationId, setActiveConversationId] = useState(initialActiveConversation.id);
   const [sessionId, setSessionId] = useState<string | null>(initialActiveConversation.sessionId ?? null);
@@ -156,7 +154,9 @@ export function ChatShell() {
   const [audioInputStatus, setAudioInputStatus] = useState("麦克风未开启");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(initialActiveConversation.messages);
-  const socketRef = useRef<WebSocket | null>(null);
+  const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
+  const [connectionErrors, setConnectionErrors] = useState<Record<string, string | null>>({});
+  const socketsRef = useRef(new Map<string, WebSocket>());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const currentAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -169,9 +169,14 @@ export function ChatShell() {
   const playbackQueueRef = useRef<TtsPlaybackItem[]>([]);
   const playingAudioRef = useRef(false);
   const currentTurnIdRef = useRef<string | null>(null);
+  const activeConversationIdRef = useRef(activeConversationId);
   const invalidTurnIdsRef = useRef(new Set<string>());
 
   /** 当前是否已经建立可发送消息的 WebSocket 连接。 */
+  const connectionState = connectionStates[activeConversationId] ?? "disconnected";
+  /** 当前会话最近一次连接失败信息。 */
+  const connectionError = connectionErrors[activeConversationId] ?? null;
+  /** 当前会话是否已经建立可发送消息的 WebSocket 连接。 */
   const connected = connectionState === "connected";
 
   /** 左侧会话列表，全部来自浏览器 localStorage 和当前运行态。 */
@@ -227,8 +232,9 @@ export function ChatShell() {
     microphoneContextRef.current = null;
     setAudioInputStatus("麦克风未开启");
 
-    if (sendAudioEnd && socketRef.current?.readyState === WebSocket.OPEN) {
-      sendWsJson(socketRef.current, "audio_end", {});
+    const socket = activeSocket();
+    if (sendAudioEnd && socket?.readyState === WebSocket.OPEN) {
+      sendWsJson(socket, "audio_end", {});
       setTurnActive(true);
       setMessages((current) => [...current, systemMessage("麦克风已停止，已发送 audio_end。")]);
     }
@@ -245,6 +251,10 @@ export function ChatShell() {
   useEffect(() => {
     currentTurnIdRef.current = currentTurnId;
   }, [currentTurnId]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
 
   useEffect(() => {
     persistConversations(conversations);
@@ -281,7 +291,7 @@ export function ChatShell() {
   useEffect(() => {
     return () => {
       stopMicrophone(false);
-      socketRef.current?.close();
+      closeAllSockets();
       playbackQueueRef.current = [];
       if (currentAudioSourceRef.current) {
         try {
@@ -326,12 +336,42 @@ export function ChatShell() {
     }
   }
 
-  /** 注销当前用户并关闭已建立的 WebSocket 连接。 */
+  /** 取得当前选中会话的 WebSocket 连接。 */
+  function activeSocket() {
+    return socketsRef.current.get(activeConversationIdRef.current) ?? null;
+  }
+
+  /** 设置指定会话的 WebSocket 状态，状态按会话隔离，切换会话时不会影响其他连接。 */
+  function setConversationConnectionState(sessionId: string, state: ConnectionState) {
+    setConnectionStates((current) => ({ ...current, [sessionId]: state }));
+  }
+
+  /** 设置指定会话的连接错误。 */
+  function setConversationConnectionError(sessionId: string, error: string | null) {
+    setConnectionErrors((current) => ({ ...current, [sessionId]: error }));
+  }
+
+  /** 关闭指定会话的连接，可用于主动断开、退出登录和页面卸载。 */
+  function closeConversationSocket(sessionId: string) {
+    const socket = socketsRef.current.get(sessionId);
+    if (socket) {
+      socketsRef.current.delete(sessionId);
+      socket.close();
+    }
+    setConversationConnectionState(sessionId, "disconnected");
+  }
+
+  /** 关闭当前页面持有的所有 WebSocket 连接。 */
+  function closeAllSockets() {
+    socketsRef.current.forEach((socket) => socket.close());
+    socketsRef.current.clear();
+    setConnectionStates({});
+  }
+
+  /** 注销当前用户并关闭已建立的所有 WebSocket 连接。 */
   function handleLogout() {
-    socketRef.current?.close();
-    socketRef.current = null;
+    closeAllSockets();
     setLogin(null);
-    setConnectionState("disconnected");
     setSessionId(null);
     setCurrentTurnId(null);
     setTurnActive(false);
@@ -340,7 +380,7 @@ export function ChatShell() {
     setMessages((current) => [...current, systemMessage("已退出登录。")]);
   }
 
-  /** 重置当前连接对应的前端运行态，避免旧 session 的 turn 和音频继续污染新连接。 */
+  /** 重置当前显示会话的运行态，避免旧 turn 和音频继续污染新视图。 */
   function resetConversationRuntime() {
     setSessionId(null);
     setCurrentTurnId(null);
@@ -351,76 +391,80 @@ export function ChatShell() {
     stopPlayback("等待 TTS");
   }
 
-  /** 使用指定 token 打开一条新的 Agent WebSocket，服务端会为这条连接创建独立 session。 */
-  function openAgentSocket(token: string) {
-    socketRef.current?.close();
-    resetConversationRuntime();
-    setConnectionState("connecting");
-    setConnectionError(null);
+  /** 使用指定 token 为某个前端会话打开 Agent WebSocket，服务端会创建独立 session。 */
+  function openAgentSocket(token: string, sessionId = activeConversationIdRef.current) {
+    closeConversationSocket(sessionId);
+    if (sessionId === activeConversationIdRef.current) {
+      resetConversationRuntime();
+    }
+    setConversationConnectionState(sessionId, "connecting");
+    setConversationConnectionError(sessionId, null);
 
     const socket = new WebSocket(buildAgentWsUrl(token));
-    socketRef.current = socket;
+    socketsRef.current.set(sessionId, socket);
 
     socket.addEventListener("open", () => {
-      if (socketRef.current !== socket) {
+      if (socketsRef.current.get(sessionId) !== socket) {
         return;
       }
-      setConnectionState("connected");
+      setConversationConnectionState(sessionId, "connected");
       sendWsJson(socket, "ping", { ts: Date.now() });
-      setPlaybackStatus("等待 TTS");
-      setMessages((current) => [...current, systemMessage("WebSocket 已连接。")]);
+      if (sessionId === activeConversationIdRef.current) {
+        setPlaybackStatus("等待 TTS");
+      }
+      appendConversationMessage(sessionId, systemMessage("WebSocket 已连接。"));
     });
 
     socket.addEventListener("message", (event) => {
-      if (socketRef.current !== socket) {
+      if (socketsRef.current.get(sessionId) !== socket) {
         return;
       }
       if (typeof event.data !== "string") {
         return;
       }
       try {
-        handleAgentEvent(JSON.parse(event.data) as AgentEventEnvelope);
+        handleAgentEvent(sessionId, JSON.parse(event.data) as AgentEventEnvelope);
       } catch {
-        setMessages((current) => [...current, systemMessage("收到无法解析的服务端消息。")]);
+        appendConversationMessage(sessionId, systemMessage("收到无法解析的服务端消息。"));
       }
     });
 
     socket.addEventListener("close", () => {
-      if (socketRef.current !== socket) {
+      if (socketsRef.current.get(sessionId) !== socket) {
         return;
       }
-      setConnectionState("disconnected");
-      socketRef.current = null;
-      setSessionId(null);
-      setCurrentTurnId(null);
-      setTurnActive(false);
-      stopMicrophone(false);
-      stopPlayback("连接已断开。");
+      socketsRef.current.delete(sessionId);
+      setConversationConnectionState(sessionId, "disconnected");
+      if (sessionId === activeConversationIdRef.current) {
+        setSessionId(null);
+        setCurrentTurnId(null);
+        setTurnActive(false);
+        stopMicrophone(false);
+        stopPlayback("连接已断开。");
+      }
     });
 
     socket.addEventListener("error", () => {
-      if (socketRef.current !== socket) {
+      if (socketsRef.current.get(sessionId) !== socket) {
         return;
       }
-      setConnectionError("WebSocket 连接失败，请确认后端已启动且 token 有效。");
-      setConnectionState("disconnected");
+      setConversationConnectionError(sessionId, "WebSocket 连接失败，请确认后端已启动且 token 有效。");
+      setConversationConnectionState(sessionId, "disconnected");
     });
   }
 
-  /** 建立后端 Agent WebSocket 连接；每次新建连接都会让后端创建新的 session。 */
+  /** 为当前会话建立后端 Agent WebSocket 连接。 */
   function connectSocket() {
     if (!login?.token || connectionState === "connecting") {
       return;
     }
 
-    openAgentSocket(login.token);
+    openAgentSocket(login.token, activeConversationId);
   }
 
-  /** 主动断开 WebSocket 连接。 */
+  /** 主动断开当前会话的 WebSocket 连接。 */
   function disconnectSocket() {
-    socketRef.current?.close();
-    socketRef.current = null;
-    setConnectionState("disconnected");
+    closeConversationSocket(activeConversationId);
     setSessionId(null);
     setCurrentTurnId(null);
     setTurnActive(false);
@@ -429,75 +473,109 @@ export function ChatShell() {
     setMessages((current) => [...current, systemMessage("WebSocket 已断开。")]);
   }
 
-  /** 新建会话时关闭旧连接并重新连接，确保一个前端会话只对应一个 WebSocket session。 */
+  /** 新建会话时只为新会话打开连接，已有会话的 WebSocket 保持在线。 */
   function startNewConversation() {
     const token = login?.token;
     const conversation = createConversationRecord();
-    socketRef.current?.close();
-    socketRef.current = null;
     setMessages([]);
     setActiveConversationId(conversation.id);
+    activeConversationIdRef.current = conversation.id;
     setConversations((current) => [conversation, ...current.map((item) => ({ ...item, active: false }))]);
     setInput("");
     resetConversationRuntime();
-    setConnectionState("disconnected");
-    setConnectionError(null);
+    setConversationConnectionState(conversation.id, "disconnected");
+    setConversationConnectionError(conversation.id, null);
     setMobileSidebarOpen(false);
 
     if (token) {
-      openAgentSocket(token);
+      openAgentSocket(token, conversation.id);
     }
   }
 
-  /** 切换到浏览器本地保存的历史会话，只恢复本地消息，不复用已关闭的后端连接。 */
-  function selectConversation(conversationId: string) {
-    const conversation = conversations.find((item) => item.id === conversationId);
+  /** 切换到浏览器本地保存的会话；如果该会话连接仍在线，继续复用原 WebSocket。 */
+  function selectConversation(sessionId: string) {
+    const conversation = conversations.find((item) => item.id === sessionId);
     if (!conversation || conversation.id === activeConversationId) {
       setMobileSidebarOpen(false);
       return;
     }
 
-    socketRef.current?.close();
-    socketRef.current = null;
     setActiveConversationId(conversation.id);
+    activeConversationIdRef.current = conversation.id;
     setMessages(conversation.messages);
     setInput("");
     setSessionId(conversation.sessionId ?? null);
     setCurrentTurnId(conversation.currentTurnId ?? null);
-    setTurnActive(false);
+    currentTurnIdRef.current = conversation.currentTurnId ?? null;
+    setTurnActive(conversation.messages.some((message) => message.streaming));
     stopMicrophone(false);
     stopPlayback("已切换到本地历史会话。");
-    setConnectionState("disconnected");
-    setConnectionError(null);
     setMobileSidebarOpen(false);
   }
 
+  /** 向指定会话追加消息，活动会话更新右侧视图，后台会话只更新本地快照。 */
+  function appendConversationMessage(sessionId: string, message: ChatMessage) {
+    updateConversationMessages(sessionId, (current) => [...current, message]);
+  }
+
+  /** 更新指定会话消息，后台 WebSocket 事件不会因为切换会话而写到错误的消息流。 */
+  function updateConversationMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
+    if (sessionId === activeConversationIdRef.current) {
+      setMessages(updater);
+      return;
+    }
+    setConversations((current) =>
+      current.map((conversation) => {
+        if (conversation.id !== sessionId) {
+          return conversation;
+        }
+        const nextMessages = updater(conversation.messages);
+        return {
+          ...conversation,
+          messages: nextMessages,
+          preview: buildConversationPreview(nextMessages, conversation.preview),
+          updatedAtMs: Date.now(),
+        };
+      }),
+    );
+  }
+
   /** 处理后端下行事件并映射为聊天消息。 */
-  function handleAgentEvent(event: AgentEventEnvelope) {
+  function handleAgentEvent(sessionId: string, event: AgentEventEnvelope) {
+    const active = sessionId === activeConversationIdRef.current;
     if (event.sessionId) {
-      setSessionId(event.sessionId);
-      updateCurrentSessionTitle(event.sessionId);
+      if (active) {
+        setSessionId(event.sessionId);
+      }
+      updateConversationSessionTitle(sessionId, event.sessionId);
     }
     if (event.turnId) {
-      setCurrentTurnId(event.turnId);
+      if (active) {
+        setCurrentTurnId(event.turnId);
+      }
+      updateConversationTurnId(sessionId, event.turnId);
     }
 
     switch (event.type) {
       case "asr_final":
-        upsertUserMessage(event);
+        upsertUserMessage(sessionId, event);
         break;
       case "agent_thinking":
-        setTurnActive(true);
-        upsertAssistantMessage(event, "正在思考...", true);
+        if (active) {
+          setTurnActive(true);
+        }
+        upsertAssistantMessage(sessionId, event, "正在思考...", true);
         break;
       case "agent_text_chunk":
-        appendAssistantChunk(event);
+        appendAssistantChunk(sessionId, event);
         break;
       case "tts_audio_chunk":
-        setTurnActive(true);
-        enqueueTtsAudio(event);
+        if (active) {
+          setTurnActive(true);
+          enqueueTtsAudio(event);
+        }
         if (event.payload?.["isLast"] === true) {
-          setMessages((current) => markStreamingDone(current));
+          updateConversationMessages(sessionId, (current) => markStreamingDone(current));
         }
         break;
       case "turn_interrupted":
@@ -505,14 +583,18 @@ export function ChatShell() {
         if (event.turnId) {
           invalidTurnIdsRef.current.add(event.turnId);
         }
-        setTurnActive(false);
-        stopPlayback("当前播报已停止。");
-        setMessages((current) => markStreamingDone(current));
+        if (active) {
+          setTurnActive(false);
+          stopPlayback("当前播报已停止。");
+        }
+        updateConversationMessages(sessionId, (current) => markStreamingDone(current));
         break;
       case "error":
-        setTurnActive(false);
-        stopPlayback("后端返回错误。");
-        setMessages((current) => [
+        if (active) {
+          setTurnActive(false);
+          stopPlayback("后端返回错误。");
+        }
+        updateConversationMessages(sessionId, (current) => [
           ...markStreamingDone(current),
           systemMessage(readPayloadText(event, "message") || "后端返回错误。"),
         ]);
@@ -523,12 +605,12 @@ export function ChatShell() {
   }
 
   /** 将 asr_final 事件固化为用户消息。 */
-  function upsertUserMessage(event: AgentEventEnvelope) {
+  function upsertUserMessage(sessionId: string, event: AgentEventEnvelope) {
     const text = readPayloadText(event, "text");
     if (!text) {
       return;
     }
-    setMessages((current) => {
+    updateConversationMessages(sessionId, (current) => {
       if (current.some((message) => message.role === "user" && message.turnId === event.turnId)) {
         return current;
       }
@@ -543,12 +625,12 @@ export function ChatShell() {
         },
       ];
     });
-    updateCurrentHistory(text);
+    updateConversationHistory(sessionId, text);
   }
 
   /** 创建或更新当前 turn 的助手消息。 */
-  function upsertAssistantMessage(event: AgentEventEnvelope, content: string, streaming: boolean) {
-    setMessages((current) => {
+  function upsertAssistantMessage(sessionId: string, event: AgentEventEnvelope, content: string, streaming: boolean) {
+    updateConversationMessages(sessionId, (current) => {
       const index = current.findIndex((message) => message.role === "assistant" && message.turnId === event.turnId);
       if (index >= 0) {
         return current.map((message, messageIndex) =>
@@ -570,12 +652,12 @@ export function ChatShell() {
   }
 
   /** 把 agent_text_chunk 追加到当前助手气泡。 */
-  function appendAssistantChunk(event: AgentEventEnvelope) {
+  function appendAssistantChunk(sessionId: string, event: AgentEventEnvelope) {
     const text = readPayloadText(event, "text");
     if (!text) {
       return;
     }
-    setMessages((current) => {
+    updateConversationMessages(sessionId, (current) => {
       const index = current.findIndex((message) => message.role === "assistant" && message.turnId === event.turnId);
       if (index >= 0) {
         return current.map((message, messageIndex) =>
@@ -736,21 +818,23 @@ export function ChatShell() {
   /** 发送用户输入的文本消息。 */
   function sendTextMessage(textOverride?: string) {
     const text = (textOverride ?? input).trim();
-    if (!text || !socketRef.current || !connected) {
+    const socket = activeSocket();
+    if (!text || !socket || !connected) {
       return;
     }
 
     setInput("");
     setTurnActive(true);
-    sendWsJson(socketRef.current, "text", { text });
+    sendWsJson(socket, "text", { text });
   }
 
   /** 发送打断消息，让后端停止旧 turn。 */
   function interruptTurn() {
-    if (!socketRef.current || !connected) {
+    const socket = activeSocket();
+    if (!socket || !connected) {
       return;
     }
-    sendWsJson(socketRef.current, "interrupt", { reason: "client_interrupt" });
+    sendWsJson(socket, "interrupt", { reason: "client_interrupt" });
     if (currentTurnId) {
       invalidTurnIdsRef.current.add(currentTurnId);
     }
@@ -770,7 +854,8 @@ export function ChatShell() {
 
   /** 打开麦克风并把浏览器音频重采样为后端默认 PCM16 二进制帧。 */
   async function startMicrophone() {
-    if (!socketRef.current || !connected || recordingRef.current) {
+    const currentSocket = activeSocket();
+    if (!currentSocket || !connected || recordingRef.current) {
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -795,7 +880,7 @@ export function ChatShell() {
       mute.gain.value = 0;
 
       processor.onaudioprocess = (event) => {
-        const socket = socketRef.current;
+        const socket = activeSocket();
         if (!recordingRef.current || !socket || socket.readyState !== WebSocket.OPEN) {
           return;
         }
@@ -837,11 +922,11 @@ export function ChatShell() {
     }
   }
 
-  /** 更新左侧当前会话摘要。 */
-  function updateCurrentHistory(preview: string) {
+  /** 更新左侧指定会话摘要。 */
+  function updateConversationHistory(sessionId: string, preview: string) {
     setConversations((current) =>
       current.map((item) =>
-        item.id === activeConversationId
+        item.id === sessionId
           ? {
               ...item,
               preview,
@@ -852,15 +937,30 @@ export function ChatShell() {
     );
   }
 
-  /** 根据后端下行 sessionId 更新当前会话标题，帮助确认新对话已经对应新连接。 */
-  function updateCurrentSessionTitle(nextSessionId: string) {
+  /** 根据后端下行 sessionId 更新指定会话标题，帮助确认新对话已经对应新连接。 */
+  function updateConversationSessionTitle(sessionId: string, nextSessionId: string) {
     setConversations((current) =>
       current.map((item) =>
-        item.id === activeConversationId
+        item.id === sessionId
           ? {
               ...item,
               title: `session ${nextSessionId}`,
               sessionId: nextSessionId,
+              updatedAtMs: Date.now(),
+            }
+          : item,
+      ),
+    );
+  }
+
+  /** 保存指定会话最近一次活跃 turnId，便于切回会话时恢复本地运行态。 */
+  function updateConversationTurnId(sessionId: string, nextTurnId: string) {
+    setConversations((current) =>
+      current.map((item) =>
+        item.id === sessionId
+          ? {
+              ...item,
+              currentTurnId: nextTurnId,
               updatedAtMs: Date.now(),
             }
           : item,
@@ -1033,10 +1133,10 @@ interface SidebarContentProps extends LoginPanelProps {
   onCloseMobile: () => void;
   /** 折叠或展开桌面端侧边栏。 */
   onToggleDesktop: () => void;
-  /** 新建会话并重建 WebSocket session。 */
+  /** 新建会话并打开独立 WebSocket session。 */
   onNewConversation: () => void;
   /** 切换到浏览器本地保存的会话记录。 */
-  onSelectConversation: (conversationId: string) => void;
+  onSelectConversation: (sessionId: string) => void;
   /** 建立 WebSocket 连接。 */
   onConnect: () => void;
   /** 断开 WebSocket 连接。 */
@@ -1101,7 +1201,7 @@ function SidebarContent({
         type="button"
         variant="secondary"
         className={cn("mb-3 justify-start rounded-xl", compact && "justify-center px-0")}
-        title="新建会话并重连"
+        title="新建会话"
         onClick={onNewConversation}
       >
         <MessageSquarePlus className="size-4" />
@@ -1555,9 +1655,9 @@ function persistConversations(conversations: ConversationRecord[]) {
 }
 
 /** 记录当前选中的会话，刷新页面后继续展示同一条本地记录。 */
-function persistActiveConversationId(conversationId: string) {
+function persistActiveConversationId(sessionId: string) {
   try {
-    window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId);
+    window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, sessionId);
   } catch {
     // localStorage 不可写不影响当前页面继续联调。
   }
@@ -1639,3 +1739,4 @@ function floatToPcm16(input: Float32Array, inputRate: number, targetRate: number
 function markStreamingDone(messages: ChatMessage[]) {
   return messages.map((message) => (message.streaming ? { ...message, streaming: false } : message));
 }
+

@@ -22,7 +22,7 @@
 | Playback / interruption | 已实现 | 播报中用户开口或 interrupt 会停止旧 turn | 增加完整集成测试 |
 | Hook 扩展 | 已实现 | `VoicePipelineHook` 支持观察音频、文本、commit、LLM、TTS、打断节点 | 按业务需要增加可改写上下文的 hook |
 | 协议文档 | 已实现 | 上下行消息和 JSON 示例记录在 `docs/protocol.md`，后端下行 `AgentEvent.payload` 已改为事件专属实体类 | 与前端联调后冻结字段 |
-| 前端联调文档与界面 | 已实现 | `docs/frontend-integration.md` 记录接入方式，`ui/` 提供豆包风格 React AI 对话界面并支持麦克风 PCM 上传、TTS 播放队列、过期 turn 丢弃、新对话重建 WebSocket session 和 localStorage 历史快照 | React UI 后续补服务端历史 |
+| 前端联调文档与界面 | 已实现 | `docs/frontend-integration.md` 记录接入方式，`ui/` 提供豆包风格 React AI 对话界面并支持麦克风 PCM 上传、TTS 播放队列、过期 turn 丢弃、多前端会话 WebSocket 并存和 localStorage 历史快照 | React UI 后续补服务端历史 |
 | README / 状态文档 | 已实现 | 入口说明、系统状态、协议、功能清单齐备 | 每次功能推进同步更新 |
 | 代码注释 | 已实现 | 主源码和测试源码已补充类级、符号级、关键方法和核心约束注释 | 后续新增代码同步补注释 |
 | preemptive | 不支持 | 本版本明确禁止 turn commit 前启动 LLM/TTS | 除非另立版本，否则不实现 |
@@ -348,7 +348,7 @@
 - `docs/features.md`：主功能清单和验收记录。
 - `docs/protocol.md`：WebSocket 协议。
 - `docs/frontend-integration.md`：前端 WebSocket、文本、音频和事件处理对接说明。
-- `ui/`：React 19 + TypeScript 5.9 + Vite 7 + React Router 7 + Shadcn UI / Radix UI + Tailwind CSS 4 + Lucide React 前端对话界面，使用 pnpm 管理依赖；当前采用豆包风格的产品化聊天布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聚焦聊天区与底部固定输入框支持固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效；每次新建对话都会重建 WebSocket 连接，使一个前端对话对应一个后端 session；会话列表和消息快照保存到浏览器 `localStorage`。
+- `ui/`：React 19 + TypeScript 5.9 + Vite 7 + React Router 7 + Shadcn UI / Radix UI + Tailwind CSS 4 + Lucide React 前端对话界面，使用 pnpm 管理依赖；当前采用豆包风格的产品化聊天布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聚焦聊天区与底部固定输入框支持固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效；每个前端会话对应一条 WebSocket 和一个后端 session，多条会话连接可同时存在，切换会话不会关闭其他在线连接；会话列表和消息快照保存到浏览器 `localStorage`。
 
 后续修改规则：
 

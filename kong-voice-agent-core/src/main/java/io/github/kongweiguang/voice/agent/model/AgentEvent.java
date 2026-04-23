@@ -20,6 +20,7 @@ public record AgentEvent(EventType type, String sessionId, String turnId, Instan
      * 创建带当前时间戳的事件，并在 payload 为空时使用空实体兜底。
      */
     public static AgentEvent of(EventType type, String sessionId, String turnId, AgentEventPayload payload) {
+        // 所有下行事件都在创建时打上服务端时间，前端可用它做日志排序和延迟排查。
         return new AgentEvent(type, sessionId, turnId, Instant.now(), payload == null ? EmptyPayload.INSTANCE : payload);
     }
 }

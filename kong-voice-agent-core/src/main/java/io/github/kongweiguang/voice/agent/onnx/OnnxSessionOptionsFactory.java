@@ -28,7 +28,7 @@ public class OnnxSessionOptionsFactory {
      */
     public OrtSession.SessionOptions create() throws OrtException {
         OrtSession.SessionOptions options = new OrtSession.SessionOptions();
-        if (!config.gpuEnabled()) {
+        if (!Boolean.TRUE.equals(config.gpuEnabled())) {
             return options;
         }
         try {
@@ -37,7 +37,7 @@ public class OnnxSessionOptionsFactory {
             return options;
         } catch (OrtException ex) {
             closeQuietly(options);
-            if (!config.fallbackToCpu()) {
+            if (!Boolean.TRUE.equals(config.fallbackToCpu())) {
                 throw ex;
             }
             log.warn("ONNX Runtime CUDA provider unavailable, falling back to CPU: {}", ex.getMessage());

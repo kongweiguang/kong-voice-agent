@@ -251,6 +251,7 @@
 - `kong-voice-agent-app` 模块的 `MockLlmOrchestrator` 基于 final transcript 生成 mock 回复块。
 - `VoicePipelineService` 只在 turn committed 且 final transcript 就绪后启动 LLM。
 - 每个 LLM chunk 下发前校验 `turnId`。
+- `LlmChunk` 除标准文本片段外保留 `rawResponse`，供 hook、审计和问题排查读取底层 LLM 原始响应。
 - 下发事件：`agent_thinking`、`agent_text_chunk`。
 
 验收点：
@@ -388,6 +389,7 @@
 - 避免把 VAD / ASR / LLM / TTS 硬耦合在一个类中。
 - 核心类只添加必要注释，优先用清晰命名表达意图。
 - 新增或修改代码时同步维护类级、接口边界和关键流程注释。
+- 公开 record、payload、配置属性和扩展接口参数优先使用包装类型，例如 `Integer`、`Boolean`、`Double`、`Long`；局部循环计数、数组索引、二进制音频和模型数学计算可继续使用原始类型。
 - 可使用 Lombok 简化构造器、日志字段和状态对象访问器，但复杂初始化、参数归一化和关键边界逻辑仍保留显式代码。
 
 ### 测试要求

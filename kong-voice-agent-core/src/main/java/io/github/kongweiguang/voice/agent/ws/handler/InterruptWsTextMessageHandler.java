@@ -37,6 +37,7 @@ public class InterruptWsTextMessageHandler implements WsTextMessageHandler {
      */
     @Override
     public void handle(WsTextMessageContext context) {
+        // 主动打断与插话打断共用同一条 turn 失效和播放停止流程。
         pipelineService.interrupt(context.sessionState(), context.webSocketSession(), "client_interrupt");
     }
 }

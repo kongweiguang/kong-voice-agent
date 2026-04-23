@@ -5,33 +5,18 @@ import io.github.kongweiguang.voice.agent.session.TurnLifecycleState;
 /**
  * TurnManager 产出的状态迁移，供流水线发布或执行动作。
  *
+ * @param turnId      事件所属的 turnId
+ * @param state       事件希望推进到的生命周期状态
+ * @param committed   是否为用户 turn 提交事件
+ * @param interrupted 是否为打断事件
+ * @param reason      触发该事件的原因
  * @author kongweiguang
  */
-public record TurnEvent(
-        /**
-         * 事件所属的 turnId。
-         */
-        String turnId,
-
-        /**
-         * 事件希望推进到的生命周期状态。
-         */
-        TurnLifecycleState state,
-
-        /**
-         * 是否为用户 turn 提交事件。
-         */
-        boolean committed,
-
-        /**
-         * 是否为打断事件。
-         */
-        boolean interrupted,
-
-        /**
-         * 触发该事件的原因。
-         */
-        String reason) {
+public record TurnEvent(String turnId,
+                        TurnLifecycleState state,
+                        Boolean committed,
+                        Boolean interrupted,
+                        String reason) {
     /**
      * 创建普通状态迁移事件。
      */

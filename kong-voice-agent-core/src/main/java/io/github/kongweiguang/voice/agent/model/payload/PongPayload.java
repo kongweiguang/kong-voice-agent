@@ -6,5 +6,5 @@ package io.github.kongweiguang.voice.agent.model.payload;
  * @param ok 心跳响应是否成功
  * @author kongweiguang
  */
-public record PongPayload(boolean ok) implements AgentEventPayload {
+public record PongPayload(Boolean ok) implements AgentEventPayload {
 }

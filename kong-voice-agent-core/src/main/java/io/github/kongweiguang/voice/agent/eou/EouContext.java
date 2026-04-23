@@ -17,7 +17,7 @@ public record EouContext(
         String turnId,
         String currentTranscript,
         String language,
-        long silenceMs) {
+        Long silenceMs) {
     /**
      * 归一化文本和集合，避免具体 detector 重复判空。
      */

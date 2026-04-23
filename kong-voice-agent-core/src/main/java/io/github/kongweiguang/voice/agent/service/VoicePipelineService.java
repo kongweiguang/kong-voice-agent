@@ -124,9 +124,11 @@ public class VoicePipelineService {
      */
     public void acceptAudio(SessionState session, WebSocketSession ws, byte[] pcm) {
         session.lastAudioAt(Instant.now());
+        // 原始音频先进入会话级缓冲，后续可用于调试、回放或接入更复杂的端点策略。
         session.pcmRingBuffer().write(pcm);
         session.preRollBuffer().write(pcm);
         hooks.forEach(hook -> hook.onAudioReceived(session, ws, pcm));
+        // VAD、ASR 和状态机推进可能有模型或远端调用，必须离开 WebSocket IO 线程执行。
         CompletableFuture.runAsync(() -> processAudio(session, ws, pcm), audioTaskExecutor);
     }
 
@@ -138,6 +140,7 @@ public class VoicePipelineService {
         if (!session.isCurrentTurn(turnId)) {
             return;
         }
+        // audio_end 是客户端显式提交边界，绕过静音等待，直接获取 ASR final。
         AsrUpdate fin = session.asrAdapter().commitTurn(turnId);
         publishAsrFinal(session, ws, fin);
         startLlmAfterCommit(session, ws, fin);
@@ -153,9 +156,10 @@ public class VoicePipelineService {
             throw new IllegalArgumentException("payload.text must not be blank");
         }
         hooks.forEach(hook -> hook.onTextReceived(session, ws, normalized));
-        String turnId = session.agentSpeaking()
+        String turnId = Boolean.TRUE.equals(session.agentSpeaking())
                 ? interruptWithHooks(session, ws, "client_text")
                 : session.nextTurnId();
+        // 文本输入已经是完整用户 turn，因此直接进入 committed 状态，不经过 VAD/ASR/EOU。
         session.lastSpeechAt(Instant.now());
         session.lifecycleState(TurnLifecycleState.USER_TURN_COMMITTED);
         publishState(session, ws, TurnLifecycleState.USER_TURN_COMMITTED, "text");
@@ -183,34 +187,43 @@ public class VoicePipelineService {
      */
     private void processAudioLocked(SessionState session, WebSocketSession ws, byte[] pcm) {
         String turnId = session.currentTurnId();
+        // 先用当前 turnId 做 VAD；空闲状态下 turnId 可能为空，真正检测到人声后才会创建新 turn。
         VadDecision vad = vadEngine.detect(turnId, pcm);
-        if (session.agentSpeaking() && vad.speech()) {
+        if (Boolean.TRUE.equals(session.agentSpeaking()) && Boolean.TRUE.equals(vad.speech())) {
+            // Agent 播报过程中检测到用户说话，按插话处理并把当前音频块归入新的用户 turn。
             String newTurnId = interruptWithHooks(session, ws, "barge_in");
             vad = new VadDecision(newTurnId, vad.speechProbability(), vad.speech(), vad.audioAt());
         }
-        if (!vad.speech() && !session.hasCurrentTurn()) {
+        if (!Boolean.TRUE.equals(vad.speech()) && !session.hasCurrentTurn()) {
+            // 空闲阶段的静音帧没有业务意义，避免送入 ASR 或推进状态机。
             return;
         }
-        if (vad.speech() && (!session.hasCurrentTurn() || session.lifecycleState() == TurnLifecycleState.IDLE)) {
+        if (Boolean.TRUE.equals(vad.speech()) && (!session.hasCurrentTurn() || session.lifecycleState() == TurnLifecycleState.IDLE)) {
+            // 用户从空闲状态开始说话时创建新的 turn，后续 ASR、EOU、LLM 和 TTS 都围绕该 turn 隔离。
             session.nextTurnId();
         }
         String activeTurnId = session.currentTurnId();
         session.activeAsrTurnId(activeTurnId);
+        // 每个有效音频块都会进入 ASR；真流式 ASR 可返回 partial，同步 HTTP ASR 通常只缓存并返回空。
         Optional<AsrUpdate> asrUpdate = session.asrAdapter().acceptAudio(activeTurnId, pcm);
         asrUpdate.ifPresent(update -> publishAsrPartial(session, ws, update));
 
         Instant now = Instant.now();
+        // EOU 只在静音候选且已有 ASR 文本时参与判断，用于区分短暂停顿和真正说完。
         Optional<EouPrediction> eouPrediction = maybePredictEou(session, activeTurnId, vad, now);
+        // TurnManager 统一消费 VAD、ASR partial、EOU 和时间信息，产出状态迁移、提交或打断事件。
         List<TurnEvent> events = session.turnManager().onAudio(session, new VadDecision(activeTurnId, vad.speechProbability(), vad.speech(), vad.audioAt()), asrUpdate, eouPrediction, now);
         for (TurnEvent event : events) {
-            if (event.interrupted()) {
+            if (Boolean.TRUE.equals(event.interrupted())) {
                 interruptWithHooks(session, ws, event.reason());
-            } else if (event.committed()) {
+            } else if (Boolean.TRUE.equals(event.committed())) {
+                // 只有 committed 事件才会取 ASR final，并以该最终文本作为 LLM/TTS 的启动边界。
                 publishState(session, ws, event.state(), event.reason());
                 AsrUpdate fin = session.asrAdapter().commitTurn(event.turnId());
                 publishAsrFinal(session, ws, fin);
                 startLlmAfterCommit(session, ws, fin);
             } else {
+                // 非提交事件只同步生命周期状态给前端，例如说话中、静音候选或 EOU 等待。
                 publishState(session, ws, event.state(), event.reason());
             }
         }
@@ -220,9 +233,10 @@ public class VoicePipelineService {
      * 仅在当前已提交 turn 的 ASR 最终结果存在后启动 LLM。
      */
     private void startLlmAfterCommit(SessionState session, WebSocketSession ws, AsrUpdate fin) {
-        if (!fin.fin() || !session.isCurrentTurn(fin.turnId())) {
+        if (!Boolean.TRUE.equals(fin.fin()) || !session.isCurrentTurn(fin.turnId())) {
             return;
         }
+        // final transcript 是 LLM 请求的唯一用户输入来源，partial 不能越过该边界。
         session.finalTranscript(fin.transcript());
         session.lifecycleState(TurnLifecycleState.AGENT_THINKING);
         session.activeLlmTurnId(fin.turnId());
@@ -234,6 +248,7 @@ public class VoicePipelineService {
             AtomicBoolean failed = new AtomicBoolean(false);
             try {
                 llmOrchestrator.stream(request, chunk -> {
+                    // LLM 回调内捕获 TTS 失败，避免异常逃逸到流式模型或 Reactor 回调线程。
                     if (failed.get()) {
                         return;
                     }
@@ -260,7 +275,8 @@ public class VoicePipelineService {
         }
         boolean hasText = chunk.text() != null && !chunk.text().isEmpty();
         if (!hasText) {
-            if (chunk.last()) {
+            if (Boolean.TRUE.equals(chunk.last())) {
+                // 末尾空 chunk 只用于关闭本轮 Agent 状态，不触发 TTS。
                 completeAgentTurn(session, chunk.turnId());
             }
             return;
@@ -272,7 +288,7 @@ public class VoicePipelineService {
         session.agentSpeaking(true);
         session.activeTtsTurnId(chunk.turnId());
         synthesizeTts(session, ws, chunk, ttsSeq);
-        if (chunk.last() && session.isCurrentTurn(chunk.turnId())) {
+        if (Boolean.TRUE.equals(chunk.last()) && session.isCurrentTurn(chunk.turnId())) {
             completeAgentTurn(session, chunk.turnId());
         }
     }
@@ -282,6 +298,7 @@ public class VoicePipelineService {
      */
     private void synthesizeTts(SessionState session, WebSocketSession ws, LlmChunk chunk, AtomicInteger ttsSeq) {
         ttsOrchestrator.synthesizeStreaming(chunk.turnId(), ttsSeq.get(), chunk.text(), chunk.last(), ttsChunk -> {
+            // TTS 可一次回调多个音频块，seq 在流水线边界统一递增，便于前端排队播放。
             publishTts(session, ws, ttsChunk);
             ttsSeq.incrementAndGet();
         });
@@ -370,7 +387,7 @@ public class VoicePipelineService {
      * 在静音候选阶段调用 EOU，且同一文本只推理一次，避免每个音频帧重复消耗模型。
      */
     private Optional<EouPrediction> maybePredictEou(SessionState session, String turnId, VadDecision vad, Instant now) {
-        if (!eouConfig.enabled() || vad.speech() || session.lastSpeechAt() == null || !session.isCurrentTurn(turnId)) {
+        if (!Boolean.TRUE.equals(eouConfig.enabled()) || Boolean.TRUE.equals(vad.speech()) || session.lastSpeechAt() == null || !session.isCurrentTurn(turnId)) {
             return Optional.empty();
         }
         long silenceMs = Duration.between(session.lastSpeechAt(), now).toMillis();

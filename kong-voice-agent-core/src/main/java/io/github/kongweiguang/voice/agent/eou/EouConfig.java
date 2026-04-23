@@ -24,10 +24,10 @@ public record EouConfig(
         String modelPath,
         String tokenizerPath,
         Boolean fallbackEnabled,
-        double defaultThreshold,
-        int minSilenceMs,
-        int maxSilenceMs,
-        int inferenceTimeoutMs,
+        Double defaultThreshold,
+        Integer minSilenceMs,
+        Integer maxSilenceMs,
+        Integer inferenceTimeoutMs,
         String language) {
     /**
      * 归一化默认值，保证开源用户不准备模型时也能启动 mock 闭环。
@@ -46,16 +46,16 @@ public record EouConfig(
         tokenizerPath = tokenizerPath == null || tokenizerPath.isBlank()
                 ? "file:models/livekit-turn-detector/tokenizer.json"
                 : tokenizerPath.trim();
-        if (defaultThreshold <= 0 || defaultThreshold >= 1) {
+        if (defaultThreshold == null || defaultThreshold <= 0 || defaultThreshold >= 1) {
             defaultThreshold = 0.5;
         }
-        if (minSilenceMs <= 0) {
+        if (minSilenceMs == null || minSilenceMs <= 0) {
             minSilenceMs = 500;
         }
-        if (maxSilenceMs <= minSilenceMs) {
+        if (maxSilenceMs == null || maxSilenceMs <= minSilenceMs) {
             maxSilenceMs = Math.max(1600, minSilenceMs + 500);
         }
-        if (inferenceTimeoutMs <= 0) {
+        if (inferenceTimeoutMs == null || inferenceTimeoutMs <= 0) {
             inferenceTimeoutMs = 300;
         }
         language = language == null || language.isBlank() ? "zh" : language.trim();

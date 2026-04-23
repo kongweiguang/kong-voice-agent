@@ -37,6 +37,7 @@ public class TextWsTextMessageHandler implements WsTextMessageHandler {
      */
     @Override
     public void handle(WsTextMessageContext context) {
+        // 文本消息直接进入 committed turn 路径，后续由流水线统一下发 asr_final 和 Agent 回复。
         pipelineService.acceptText(context.sessionState(), context.webSocketSession(), context.message().textPayload());
     }
 }

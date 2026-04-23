@@ -37,6 +37,7 @@ public class AudioEndWsTextMessageHandler implements WsTextMessageHandler {
      */
     @Override
     public void handle(WsTextMessageContext context) {
+        // audio_end 是客户端声明本轮音频结束的控制帧，流水线会立即尝试提交 ASR final。
         pipelineService.commitAudioEnd(context.sessionState(), context.webSocketSession());
     }
 }

@@ -63,9 +63,10 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
      * 将当前 LLM 文本片段提交给 Qwen-TTS 服务，并返回对应音频块。
      */
     @Override
-    public List<TtsChunk> synthesize(String turnId, int startSeq, String text, boolean lastTextChunk) {
+    public List<TtsChunk> synthesize(String turnId, Integer startSeq, String text, Boolean lastTextChunk) {
         String pendingText = takeReadyText(turnId, text, lastTextChunk);
         if (pendingText.isBlank()) {
+            // 文本尚未到句子边界或不可播报时不产出音频，流水线会继续等待后续 LLM 片段。
             return List.of();
         }
         return List.of(new TtsChunk(turnId, startSeq, lastTextChunk, speechAudio(pendingText), pendingText));
@@ -75,13 +76,14 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
      * 按句聚合 LLM 文本，并在 DashScope 流式模式开启时边读取 SSE 音频边回调下游。
      */
     @Override
-    public void synthesizeStreaming(String turnId, int startSeq, String text, boolean lastTextChunk,
+    public void synthesizeStreaming(String turnId, Integer startSeq, String text, Boolean lastTextChunk,
                                     Consumer<TtsChunk> chunkConsumer) {
         String pendingText = takeReadyText(turnId, text, lastTextChunk);
         if (pendingText.isBlank()) {
             return;
         }
         if (!properties.streamingEnabled()) {
+            // 关闭远端流式模式时，一句文本只产出一个音频块。
             chunkConsumer.accept(new TtsChunk(turnId, startSeq, lastTextChunk, speechAudio(pendingText), pendingText));
             return;
         }
@@ -114,10 +116,11 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
     /**
      * 调用 DashScope SSE 流式 TTS 接口，读取到一个音频分片就立即交给流水线下发。
      */
-    private void speechAudioStreaming(String turnId, int startSeq, String text, boolean lastTextChunk,
+    private void speechAudioStreaming(String turnId, Integer startSeq, String text, Boolean lastTextChunk,
                                       Consumer<TtsChunk> chunkConsumer) {
         requireApiKey();
         try {
+            // DashScope SSE 返回的每段音频会立即转成 TtsChunk，随后由 VoicePipelineService 下发。
             restClient().post()
                     .uri(properties.generationPath())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -167,18 +170,19 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
     /**
      * 取出已满足合成条件的文本；非末尾片段必须累计到句子边界，避免短音频造成播放断续。
      */
-    private String takeReadyText(String turnId, String text, boolean lastTextChunk) {
+    private String takeReadyText(String turnId, String text, Boolean lastTextChunk) {
         String pendingText = appendPendingText(turnId, normalizeText(text));
         if (pendingText.isBlank()) {
             return "";
         }
         if (!hasSpeakableCharacter(pendingText)) {
-            if (lastTextChunk) {
+            if (Boolean.TRUE.equals(lastTextChunk)) {
                 pendingTextByTurn.remove(turnId);
             }
             return "";
         }
-        if (!lastTextChunk && !endsWithSentencePunctuation(pendingText.strip())) {
+        if (!Boolean.TRUE.equals(lastTextChunk) && !endsWithSentencePunctuation(pendingText.strip())) {
+            // 非末尾 LLM 片段需要等到自然句末，避免前端播放很多过短音频。
             return "";
         }
         pendingTextByTurn.remove(turnId);
@@ -283,9 +287,9 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
     /**
      * 解析 DashScope SSE 响应，每个 data 段可能携带一段 base64 音频。
      */
-    private void readStreamingAudio(String turnId, int startSeq, String text, boolean lastTextChunk,
+    private void readStreamingAudio(String turnId, Integer startSeq, String text, Boolean lastTextChunk,
                                     InputStream body, Consumer<TtsChunk> chunkConsumer) {
-        AtomicInteger nextSeq = new AtomicInteger(startSeq);
+        AtomicInteger nextSeq = new AtomicInteger(startSeq == null ? 0 : startSeq);
         AtomicReference<TtsChunk> previous = new AtomicReference<>();
         AtomicBoolean receivedAudio = new AtomicBoolean(false);
         StringBuilder data = new StringBuilder();
@@ -293,6 +297,7 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isBlank()) {
+                    // SSE 空行表示一个 data 事件结束，此时尝试解析并发出上一段音频。
                     emitStreamingData(turnId, text, data.toString(), nextSeq, previous, receivedAudio, chunkConsumer);
                     data.setLength(0);
                     continue;
@@ -304,6 +309,7 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
             emitStreamingData(turnId, text, data.toString(), nextSeq, previous, receivedAudio, chunkConsumer);
             TtsChunk lastChunk = previous.get();
             if (lastChunk != null) {
+                // 最后一块必须延后到读取结束后标记 last=true，前端才能正确关闭播放状态。
                 chunkConsumer.accept(new TtsChunk(lastChunk.turnId(), lastChunk.seq(), lastTextChunk, lastChunk.audio(), lastChunk.text()));
             }
         } catch (Exception ex) {
@@ -331,6 +337,7 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
         TtsChunk current = new TtsChunk(turnId, nextSeq.getAndIncrement(), false, audio, text);
         TtsChunk ready = previous.getAndSet(current);
         if (ready != null) {
+            // 延迟一个 chunk 下发，确保还不知道是否为末尾的音频不会错误携带 last=true。
             chunkConsumer.accept(ready);
         }
     }

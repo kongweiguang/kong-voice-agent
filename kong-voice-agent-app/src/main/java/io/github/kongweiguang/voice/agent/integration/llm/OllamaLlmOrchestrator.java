@@ -17,33 +17,38 @@ import java.util.function.Consumer;
 @Component
 @RequiredArgsConstructor
 public class OllamaLlmOrchestrator implements LlmOrchestrator {
+    /**
+     * 应用侧 Agent 服务，负责调用底层模型并维护 AgentScope 会话记忆。
+     */
     private final AgentService agentService;
 
     /**
-     * 输出固定结构的流式回复，便于测试事件顺序和 turnId 保护。
+     * 将 AgentService 的 ChatEvent 流转换为核心流水线识别的 LlmChunk。
      */
     @Override
     public void stream(LlmRequest request, Consumer<LlmChunk> chunkConsumer) {
         agentService
                 .chat(request.sessionId(), request.finalTranscript())
                 .subscribe(event -> {
-                    System.out.println(event.getType() + " --> :" + event.getContent());
-
-                    if (event.getType() == "TEXT") {
+                    // TEXT 事件会被原样转成 Agent 文本 chunk，后续继续进入 TTS。
+                    if ("TEXT".equals(event.getType())) {
                         chunkConsumer.accept(
                                 new LlmChunk(
                                         request.turnId(),
                                         0,
                                         event.getContent(),
-                                        false
+                                        false,
+                                        event.getRawResponse()
                                 ));
-                    } else if (event.getType() == "COMPLETE") {
+                    } else if ("COMPLETE".equals(event.getType())) {
+                        // COMPLETE 事件只标记本轮 LLM 结束，流水线据此关闭当前 Agent turn。
                         chunkConsumer.accept(
                                 new LlmChunk(
                                         request.turnId(),
                                         0,
                                         event.getContent(),
-                                        true
+                                        true,
+                                        event.getRawResponse()
                                 ));
                     }
 

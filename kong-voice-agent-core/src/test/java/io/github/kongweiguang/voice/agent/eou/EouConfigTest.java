@@ -17,7 +17,7 @@ class EouConfigTest {
     @Test
     @DisplayName("缺省值可支持开源用户直接启动")
     void normalizesDefaults() {
-        EouConfig config = new EouConfig(null, null, null, null, true, 0, 0, 0, 0, null);
+        EouConfig config = new EouConfig(null, null, null, null, true, 0D, 0, 0, 0, null);
 
         assertThat(config.enabled()).isTrue();
         assertThat(config.provider()).isEqualTo("livekit-multilingual");

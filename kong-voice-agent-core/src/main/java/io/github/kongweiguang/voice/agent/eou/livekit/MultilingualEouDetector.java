@@ -104,6 +104,7 @@ public class MultilingualEouDetector implements EouDetector {
             if (!"livekit-multilingual".equals(config.provider())) {
                 throw new IllegalStateException("Unsupported EOU provider: " + config.provider());
             }
+            // EOU 默认依赖本地 ONNX 模型和 tokenizer，二者任一缺失都进入统一 fallback 策略。
             File model = resolveFile(resourceLoader, config.modelPath(), "EOU model");
             File tokenizerFile = resolveFile(resourceLoader, config.tokenizerPath(), "EOU tokenizer");
             env = OrtEnvironment.getEnvironment();
@@ -149,6 +150,7 @@ public class MultilingualEouDetector implements EouDetector {
             String prompt = promptBuilder.build(context);
             inferenceLock.lock();
             try {
+                // tokenizer 与 ONNX session 都可能包含 native 状态，真实推理段通过锁串行化。
                 Encoding encoding = tokenizer.encode(prompt, true, false);
                 long[] ids = encoding.getIds();
                 if (ids.length == 0) {
@@ -192,6 +194,7 @@ public class MultilingualEouDetector implements EouDetector {
             long[][] attentionMask = new long[][]{ones(inputIds.length)};
             long[][] tokenTypeIds = new long[][]{new long[inputIds.length]};
             for (String inputName : session.getInputNames()) {
+                // 按 Hugging Face 常见输入名构造 tensor，不认识的输入直接视为模型签名不兼容。
                 OnnxTensor tensor = switch (inputName) {
                     case "input_ids" -> OnnxTensor.createTensor(environment, ids);
                     case "attention_mask" -> OnnxTensor.createTensor(environment, attentionMask);

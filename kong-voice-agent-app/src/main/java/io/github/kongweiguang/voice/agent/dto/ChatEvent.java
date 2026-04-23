@@ -23,64 +23,85 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Chat event sent to frontend via SSE.
+ * 应用侧 Agent 输出事件，OllamaLlmOrchestrator 会把它转换成核心流水线的 LlmChunk。
+ *
+ * @author kongweiguang
  */
 @Data
 public class ChatEvent {
 
     /**
-     * Event type: TEXT, TOOL_USE, TOOL_RESULT, TOOL_CONFIRM, ERROR, COMPLETE.
+     * 事件类型：TEXT、TOOL_USE、TOOL_RESULT、TOOL_CONFIRM、ERROR、COMPLETE。
      */
     private String type;
 
     /**
-     * Text content for TEXT events.
+     * TEXT 事件携带的增量文本。
      */
     private String content;
 
     /**
-     * Tool name for TOOL_USE/TOOL_RESULT events.
+     * TOOL_USE 或 TOOL_RESULT 事件携带的工具名称。
      */
     private String toolName;
 
     /**
-     * Tool ID for TOOL_USE/TOOL_RESULT events.
+     * TOOL_USE 或 TOOL_RESULT 事件携带的工具调用 ID。
      */
     private String toolId;
 
     /**
-     * Tool input parameters for TOOL_USE events.
+     * TOOL_USE 事件携带的工具入参。
      */
     private Map<String, Object> toolInput;
 
     /**
-     * Tool result for TOOL_RESULT events.
+     * TOOL_RESULT 事件携带的工具结果。
      */
     private String toolResult;
 
     /**
-     * Pending tool calls for TOOL_CONFIRM events.
+     * TOOL_CONFIRM 事件携带的待确认工具调用列表。
      */
     private List<PendingToolCall> pendingToolCalls;
 
     /**
-     * Error message for ERROR events.
+     * ERROR 事件携带的错误信息。
      */
     private String error;
 
     /**
-     * Indicates if this is incremental content.
+     * 底层 AgentScope 或模型供应商返回的原始响应内容。
      */
-    private boolean incremental;
+    private String rawResponse;
 
-    public static ChatEvent text(String content, boolean incremental) {
+    /**
+     * 是否为增量文本内容。
+     */
+    private Boolean incremental;
+
+    /**
+     * 创建一段可进入 LLM/TTS 下游的文本事件。
+     */
+    public static ChatEvent text(String content, Boolean incremental) {
+        return text(content, incremental, content);
+    }
+
+    /**
+     * 创建一段可进入 LLM/TTS 下游的文本事件，并保留底层原始响应。
+     */
+    public static ChatEvent text(String content, Boolean incremental, String rawResponse) {
         ChatEvent event = new ChatEvent();
         event.type = "TEXT";
         event.content = content;
         event.incremental = incremental;
+        event.rawResponse = rawResponse;
         return event;
     }
 
+    /**
+     * 创建工具调用事件。
+     */
     public static ChatEvent toolUse(String toolId, String toolName, Map<String, Object> input) {
         ChatEvent event = new ChatEvent();
         event.type = "TOOL_USE";
@@ -90,6 +111,9 @@ public class ChatEvent {
         return event;
     }
 
+    /**
+     * 创建工具结果事件。
+     */
     public static ChatEvent toolResult(String toolId, String toolName, String result) {
         ChatEvent event = new ChatEvent();
         event.type = "TOOL_RESULT";
@@ -99,6 +123,9 @@ public class ChatEvent {
         return event;
     }
 
+    /**
+     * 创建等待用户确认工具调用的事件。
+     */
     public static ChatEvent toolConfirm(List<PendingToolCall> pendingToolCalls) {
         ChatEvent event = new ChatEvent();
         event.type = "TOOL_CONFIRM";
@@ -106,19 +133,29 @@ public class ChatEvent {
         return event;
     }
 
+    /**
+     * 创建模型或 Agent 执行失败事件。
+     */
     public static ChatEvent error(String error) {
         ChatEvent event = new ChatEvent();
         event.type = "ERROR";
         event.error = error;
+        event.rawResponse = error;
         return event;
     }
 
+    /**
+     * 创建本轮模型输出结束事件。
+     */
     public static ChatEvent complete() {
         ChatEvent event = new ChatEvent();
         event.type = "COMPLETE";
         return event;
     }
 
+    /**
+     * 创建应用侧中断事件。
+     */
     public static ChatEvent interrupted(String message) {
         ChatEvent event = new ChatEvent();
         event.type = "INTERRUPTED";
@@ -127,16 +164,33 @@ public class ChatEvent {
     }
 
     /**
-     * Pending tool call information for confirmation.
+     * 等待用户确认的工具调用信息。
+     *
+     * @author kongweiguang
      */
     @Data
     @AllArgsConstructor
     @NoArgsConstructor
     public static class PendingToolCall {
+        /**
+         * 工具调用 ID。
+         */
         private String id;
+
+        /**
+         * 工具名称。
+         */
         private String name;
+
+        /**
+         * 工具入参。
+         */
         private Map<String, Object> input;
-        private boolean dangerous;
+
+        /**
+         * 是否为高风险工具调用，需要用户显式确认。
+         */
+        private Boolean dangerous;
 
     }
 }

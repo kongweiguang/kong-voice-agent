@@ -73,40 +73,47 @@ public class EndpointingPolicy {
                                      Instant now,
                                      Instant speechStartAt,
                                      Optional<EouPrediction> eouPrediction) {
-        boolean speech = vad.speechProbability() >= SPEECH_THRESHOLD || vad.speech();
+        // VAD 实现可能直接给 speech 标记，也可能只给概率；二者任一满足即可进入说话判断。
+        boolean speech = vad.speechProbability() >= SPEECH_THRESHOLD || Boolean.TRUE.equals(vad.speech());
         if (session.lifecycleState() == TurnLifecycleState.IDLE && speech) {
             return new EndpointDecision(true, false, false, "speech_started");
         }
         if (speechStartAt == null) {
+            // 尚未确认说话开始时，不允许仅凭静音触发 endpoint。
             return EndpointDecision.none();
         }
         long speechMs = Duration.between(speechStartAt, now).toMillis();
         if (speechMs >= MAX_TURN_MS) {
+            // 最长 turn 是兜底保护，避免用户长时间不断句导致后续 LLM/TTS 永远不启动。
             return new EndpointDecision(false, true, false, "max_turn_ms");
         }
         if (vad.speechProbability() <= SILENCE_THRESHOLD && session.lastSpeechAt() != null) {
             long silenceMs = Duration.between(session.lastSpeechAt(), now).toMillis();
             if (speechMs < MIN_SPEECH_MS) {
+                // 过短人声更可能是噪声或误触发，不提交用户 turn。
                 return EndpointDecision.none();
             }
-            if (!eouConfig.enabled()) {
+            if (!Boolean.TRUE.equals(eouConfig.enabled())) {
                 if (silenceMs >= END_SILENCE_MS) {
                     return new EndpointDecision(false, true, false, "end_silence_ms");
                 }
                 return EndpointDecision.none();
             }
             if (silenceMs >= eouConfig.maxSilenceMs()) {
+                // EOU 长时间不确认时按最大静音窗口提交，保证系统不会卡在 endpointing。
                 return new EndpointDecision(false, true, false, "eou_max_silence_fallback");
             }
             if (silenceMs >= eouConfig.minSilenceMs()) {
                 if (eouPrediction.isPresent()) {
                     EouPrediction prediction = eouPrediction.get();
-                    if (prediction.finished()) {
+                    if (Boolean.TRUE.equals(prediction.finished())) {
                         return new EndpointDecision(false, true, false, prediction.reason());
                     }
+                    // 模型判断用户可能还会继续说，状态机保持 USER_ENDPOINTING。
                     return EndpointDecision.waiting(prediction.reason());
                 }
                 if (session.partialTranscript().isBlank() && silenceMs >= END_SILENCE_MS) {
+                    // 没有 partial 文本时无法做语义判断，回退到纯静音端点策略。
                     return new EndpointDecision(false, true, false, "end_silence_ms");
                 }
                 return EndpointDecision.waiting("eou_waiting");

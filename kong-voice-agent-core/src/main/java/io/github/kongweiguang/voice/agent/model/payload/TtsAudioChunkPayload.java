@@ -9,8 +9,8 @@ package io.github.kongweiguang.voice.agent.model.payload;
  * @param audioBase64 当前音频片段的 base64 编码内容
  * @author kongweiguang
  */
-public record TtsAudioChunkPayload(int seq,
-                                   boolean isLast,
+public record TtsAudioChunkPayload(Integer seq,
+                                   Boolean isLast,
                                    String text,
                                    String audioBase64) implements AgentEventPayload {
 }

@@ -12,7 +12,7 @@ public interface EouHistoryProvider {
     /**
      * 返回指定会话最近的对话片段，调用方传入最大数量，避免实现暴露过多历史。
      */
-    List<ConversationTurn> recentTurns(String sessionId, int maxTurns);
+    List<ConversationTurn> recentTurns(String sessionId, Integer maxTurns);
 
     /**
      * 不提供历史的默认实现，保持 core 不主动记录业务对话内容。

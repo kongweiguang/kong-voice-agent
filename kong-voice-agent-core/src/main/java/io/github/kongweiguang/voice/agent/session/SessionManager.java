@@ -62,6 +62,7 @@ public class SessionManager {
         SessionState state = new SessionState(sessionId, audioFormatSpec, asrAdapterFactory, eouConfig);
         String previousWebSocketId = sessionWebSocketIds.put(sessionId, webSocketSession.getId());
         if (previousWebSocketId != null && !previousWebSocketId.equals(webSocketSession.getId())) {
+            // 同一业务 sessionId 重新连接时，只保留最新 WebSocket，旧连接状态必须清理并失效 turn。
             SessionState previous = sessions.remove(previousWebSocketId);
             webSocketSessions.remove(previousWebSocketId);
             if (previous != null) {
@@ -109,6 +110,7 @@ public class SessionManager {
         webSocketSessions.remove(webSocketSession.getId());
         SessionState state = sessions.remove(webSocketSession.getId());
         if (state != null) {
+            // 使用 remove(key, value) 避免旧连接断开时误删同 sessionId 的新连接索引。
             sessionWebSocketIds.remove(state.sessionId(), webSocketSession.getId());
             state.clear();
         }

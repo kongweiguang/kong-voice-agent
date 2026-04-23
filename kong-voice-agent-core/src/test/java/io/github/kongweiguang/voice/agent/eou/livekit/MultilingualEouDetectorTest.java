@@ -74,7 +74,7 @@ class MultilingualEouDetectorTest {
                 (sessionId, maxTurns) -> java.util.List.of(),
                 modelResourceLoader(projectRoot)
         )) {
-            EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我想查询明天上海的天气", "zh", 700));
+            EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我想查询明天上海的天气", "zh", 700L));
 
             assertThat(prediction.probability()).isBetween(0.0, 1.0);
             assertThat(prediction.threshold()).isEqualTo(0.5);
@@ -104,7 +104,7 @@ class MultilingualEouDetectorTest {
                     "turn-1",
                     "我想查询明天上海的天气",
                     "zh",
-                    700
+                    700L
             ));
 
             assertThat(prediction.probability()).isBetween(0.0, 1.0);
@@ -138,7 +138,7 @@ class MultilingualEouDetectorTest {
                             "turn-" + (index + 1),
                             "我想查询明天上海的天气，然后再看看后天是否下雨",
                             "zh",
-                            700
+                            700L
                     ))));
                 }
                 for (Future<EouPrediction> future : futures) {
@@ -204,7 +204,7 @@ class MultilingualEouDetectorTest {
         setField(detector, "tokenizer", tokenizer);
         setField(detector, "eouTokenId", 1L);
 
-        EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我说完了", "zh", 700));
+        EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我说完了", "zh", 700L));
 
         assertThat(prediction.finished()).isTrue();
         assertThat(prediction.probability()).isGreaterThanOrEqualTo(0.7);
@@ -221,7 +221,7 @@ class MultilingualEouDetectorTest {
     void predictFallsBackWhenModelAssetsUnavailable() {
         MultilingualEouDetector detector = detectorWithMissingAssets();
 
-        EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我说完了", "zh", 700));
+        EouPrediction prediction = detector.predict(new EouContext("session-1", "turn-9", "我说完了", "zh", 700L));
 
         assertThat(prediction.finished()).isTrue();
         assertThat(prediction.probability()).isEqualTo(1.0);

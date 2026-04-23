@@ -37,6 +37,7 @@ public class AuthTokenService {
         }
         AuthenticatedUser user = new AuthenticatedUser(fixedUser.accountId(), fixedUser.username());
         String token = UUID.randomUUID().toString();
+        // token 是后续 WebSocket 握手的入口凭证，当前仅保存在本进程内存中。
         tokenUsers.put(token, user);
         return Optional.of(new LoginToken(token, user));
     }

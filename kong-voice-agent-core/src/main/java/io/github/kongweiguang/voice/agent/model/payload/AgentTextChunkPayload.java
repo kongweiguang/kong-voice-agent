@@ -8,5 +8,5 @@ package io.github.kongweiguang.voice.agent.model.payload;
  * @param isLast 是否为本轮 Agent 回复文本的最后一个片段
  * @author kongweiguang
  */
-public record AgentTextChunkPayload(int seq, String text, boolean isLast) implements AgentEventPayload {
+public record AgentTextChunkPayload(Integer seq, String text, Boolean isLast) implements AgentEventPayload {
 }

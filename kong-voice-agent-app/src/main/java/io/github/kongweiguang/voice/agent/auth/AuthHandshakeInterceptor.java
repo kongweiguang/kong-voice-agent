@@ -38,11 +38,13 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
         Map<String, String> map = extractParamsAsSimpleMap(request);
         return authTokenService.authenticate(map.get("token"))
                 .map(user -> {
+                    // 鉴权通过后把用户和 query 参数放入 attributes，后续 SessionManager 可读取 sessionId 等上下文。
                     attributes.put(AUTHENTICATED_USER_ATTRIBUTE, user);
                     attributes.putAll(map);
                     return true;
                 })
                 .orElseGet(() -> {
+                    // 鉴权失败时在握手阶段拒绝连接，避免创建无身份的 WebSocket session。
                     response.setStatusCode(HttpStatus.UNAUTHORIZED);
                     return false;
                 });

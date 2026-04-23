@@ -40,6 +40,7 @@ public class PingWsTextMessageHandler implements WsTextMessageHandler {
      */
     @Override
     public void handle(WsTextMessageContext context) {
+        // 心跳不改变业务状态，只把当前 sessionId/turnId 带回客户端用于连接保活和调试。
         dispatcher.send(context.webSocketSession(), AgentEvent.of(EventType.pong,
                 context.sessionState().sessionId(),
                 context.sessionState().currentTurnId(),

@@ -270,7 +270,7 @@ class VoicePipelineTextInputTest {
     private static final class NoopVadEngine implements VadEngine {
         @Override
         public VadDecision detect(String turnId, byte[] pcm) {
-            return new VadDecision(turnId, 0, false, Instant.now());
+            return new VadDecision(turnId, 0D, false, Instant.now());
         }
 
         @Override

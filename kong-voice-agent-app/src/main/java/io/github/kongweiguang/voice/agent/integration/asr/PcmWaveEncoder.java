@@ -48,7 +48,7 @@ public final class PcmWaveEncoder {
         writeAscii(out, "fmt ");
         writeIntLe(out, 16);
         writeShortLe(out, PCM_FORMAT);
-        writeShortLe(out, (short) format.channels());
+        writeShortLe(out, (short) format.channels().intValue());
         writeIntLe(out, format.sampleRate());
         writeIntLe(out, byteRate);
         writeShortLe(out, blockAlign);

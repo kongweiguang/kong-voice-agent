@@ -31,6 +31,7 @@ public class PlaybackDispatcher {
             return;
         }
         try {
+            // AgentEvent 是统一下行外壳，序列化后直接作为 WebSocket 文本帧发送给前端。
             String payload = JsonUtils.write(event);
             ReentrantLock lock = sendLocks.computeIfAbsent(webSocketSession.getId(), ignored -> new ReentrantLock());
             lock.lock();
@@ -38,6 +39,7 @@ public class PlaybackDispatcher {
                 if (!webSocketSession.isOpen()) {
                     return;
                 }
+                // 同一连接的事件按获得发送锁的顺序写出，避免异步 LLM/TTS 回调并发写帧。
                 webSocketSession.sendMessage(new TextMessage(payload));
             } finally {
                 lock.unlock();

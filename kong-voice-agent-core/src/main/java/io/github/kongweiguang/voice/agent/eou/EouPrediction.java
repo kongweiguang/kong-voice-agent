@@ -11,31 +11,33 @@ package io.github.kongweiguang.voice.agent.eou;
  * @author kongweiguang
  */
 public record EouPrediction(
-        boolean finished,
-        double probability,
-        double threshold,
+        Boolean finished,
+        Double probability,
+        Double threshold,
         String reason,
-        boolean modelBacked) {
+        Boolean modelBacked) {
     /**
      * 归一化概率和原因，保证下游 reason 可直接进入协议事件。
      */
     public EouPrediction {
-        probability = Math.max(0.0, Math.min(1.0, probability));
-        threshold = Math.max(0.0, Math.min(1.0, threshold));
+        finished = Boolean.TRUE.equals(finished);
+        modelBacked = Boolean.TRUE.equals(modelBacked);
+        probability = probability == null ? 0.0 : Math.max(0.0, Math.min(1.0, probability));
+        threshold = threshold == null ? 0.5 : Math.max(0.0, Math.min(1.0, threshold));
         reason = reason == null || reason.isBlank() ? (finished ? "eou_detected" : "eou_waiting") : reason.trim();
     }
 
     /**
      * 创建模型确认结束的预测结果。
      */
-    public static EouPrediction detected(double probability, double threshold, boolean modelBacked) {
+    public static EouPrediction detected(Double probability, Double threshold, Boolean modelBacked) {
         return new EouPrediction(true, probability, threshold, "eou_detected", modelBacked);
     }
 
     /**
      * 创建模型认为用户还会继续说的预测结果。
      */
-    public static EouPrediction waiting(double probability, double threshold, boolean modelBacked) {
+    public static EouPrediction waiting(Double probability, Double threshold, Boolean modelBacked) {
         return new EouPrediction(false, probability, threshold, "eou_waiting", modelBacked);
     }
 }

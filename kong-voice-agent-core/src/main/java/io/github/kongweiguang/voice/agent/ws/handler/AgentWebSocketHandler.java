@@ -67,8 +67,10 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
         SessionState state = sessionManager.get(session).orElseGet(() -> sessionManager.create(session));
         try {
             WsMessage wsMessage = JsonUtils.read(message.getPayload(), WsMessage.class);
+            // 文本帧只做协议解析和策略分发，具体业务边界由对应 WsTextMessageHandler 维护。
             textMessageHandlerRegistry.handle(new WsTextMessageContext(session, state, wsMessage));
         } catch (Exception ex) {
+            // 协议错误只下发 error，不关闭连接，方便前端继续发送有效消息自恢复。
             dispatcher.send(session,
                     AgentEvent.of(
                             EventType.error,
@@ -88,6 +90,7 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         SessionState state = sessionManager.get(session).orElseGet(() -> sessionManager.create(session));
         byte[] pcm = new byte[message.getPayloadLength()];
+        // 复制到 byte[] 后再异步处理，避免底层 ByteBuffer 生命周期影响后续 VAD/ASR。
         message.getPayload().get(pcm);
         pipelineService.acceptAudio(state, session, pcm);
     }

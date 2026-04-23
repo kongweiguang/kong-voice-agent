@@ -13,7 +13,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "kong-voice-agent.onnx")
 public record OnnxRuntimeConfig(
         Boolean gpuEnabled,
-        int gpuDeviceId,
+        Integer gpuDeviceId,
         Boolean fallbackToCpu) {
     /**
      * 归一化默认值，保证缺省运行仍使用无需额外 native 依赖的 CPU 模式。
@@ -22,7 +22,7 @@ public record OnnxRuntimeConfig(
         if (gpuEnabled == null) {
             gpuEnabled = false;
         }
-        if (gpuDeviceId < 0) {
+        if (gpuDeviceId == null || gpuDeviceId < 0) {
             gpuDeviceId = 0;
         }
         if (fallbackToCpu == null) {

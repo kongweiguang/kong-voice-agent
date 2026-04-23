@@ -26,7 +26,7 @@ class LiveKitEouPromptBuilderTest {
                 (sessionId, maxTurns) -> List.of(new ConversationTurn("assistant", "你好"))
         );
 
-        String prompt = builder.build(new EouContext("s1", "turn-1", "我想查一下明天的天气", "zh", 600));
+        String prompt = builder.build(new EouContext("s1", "turn-1", "我想查一下明天的天气", "zh", 600L));
 
         assertThat(prompt).contains("<|im_start|>assistant\n你好\n<|im_end|>");
         assertThat(prompt).endsWith("<|im_start|>user\n我想查一下明天的天气\n");
@@ -41,7 +41,7 @@ class LiveKitEouPromptBuilderTest {
         }
         LiveKitEouPromptBuilder builder = new LiveKitEouPromptBuilder((sessionId, maxTurns) -> history);
 
-        String prompt = builder.build(new EouContext("s1", "turn-1", "current", "zh", 600));
+        String prompt = builder.build(new EouContext("s1", "turn-1", "current", "zh", 600L));
 
         assertThat(prompt).doesNotContain("turn-0", "turn-1", "turn-2");
         assertThat(prompt).contains("turn-3", "turn-7", "current");

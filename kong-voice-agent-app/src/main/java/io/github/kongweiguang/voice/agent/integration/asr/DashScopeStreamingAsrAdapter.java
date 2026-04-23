@@ -48,6 +48,7 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
      */
     @Override
     public Optional<AsrUpdate> acceptAudio(String turnId, byte[] pcm) {
+        // DashScope 当前接入的是单次 HTTP ASR，这里只按 turn 累计 PCM，不伪造 asr_partial。
         pcmByTurn.merge(turnId, Arrays.copyOf(pcm, pcm.length), this::concat);
         return Optional.empty();
     }
@@ -57,6 +58,7 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
      */
     @Override
     public AsrUpdate commitTurn(String turnId) {
+        // commit 是本轮音频的最终提交点，取出后删除缓存，避免同一 turn 被重复识别。
         byte[] pcm = pcmByTurn.remove(turnId);
         if (pcm == null || pcm.length == 0) {
             throw new IllegalStateException("当前 turn 没有可提交给 DashScope Qwen-ASR 的 PCM 音频");
@@ -78,6 +80,7 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
     private String dashScopeTranscript(byte[] pcm) {
         requireApiKey();
         try {
+            // 音频在请求体里以内联 WAV data URL 传递，不依赖临时文件或公网可访问 URL。
             String response = restClient().post()
                     .uri(properties.chatCompletionsPath())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -100,6 +103,7 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
         Map<String, Object> inputAudio = new LinkedHashMap<>();
         inputAudio.put("data", audioDataUrl);
 
+        // DashScope OpenAI 兼容 ASR 使用 input_audio content item 承载音频。
         Map<String, Object> contentItem = new LinkedHashMap<>();
         contentItem.put("type", "input_audio");
         contentItem.put("input_audio", inputAudio);
@@ -133,6 +137,7 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
             JsonNode root = objectMapper.readTree(response);
             JsonNode content = root.path("choices").path(0).path("message").path("content");
             if (content.isTextual() && !content.asText().isBlank()) {
+                // 这里返回的文本会成为 asr_final，并作为后续 LLM 的唯一用户输入。
                 return content.asText().trim();
             }
         } catch (Exception ex) {

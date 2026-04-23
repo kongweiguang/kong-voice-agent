@@ -121,12 +121,12 @@ public class SessionState {
     /**
      * Agent 是否正在播报，插话打断依赖该标记。
      */
-    private volatile boolean agentSpeaking;
+    private volatile Boolean agentSpeaking = false;
 
     /**
      * 当前 turn 是否已进入打断流程。
      */
-    private volatile boolean interrupted;
+    private volatile Boolean interrupted = false;
 
     /**
      * 最近一次参与 EOU 推理的 ASR 文本，用于避免同一文本重复推理。
@@ -164,9 +164,11 @@ public class SessionState {
         try {
             String previous = currentTurnId.get();
             if (previous != null) {
+                // 新 turn 开始即失效旧 turn，防止旧 ASR/LLM/TTS 异步回调继续发布。
                 invalidTurns.add(previous);
             }
             String next = IdUtils.snowflakeIdStr();
+            // turn 级文本和 EOU 缓存必须随新 turn 重置，避免跨轮复用旧用户输入。
             partialTranscript = "";
             finalTranscript = "";
             lastEouTranscript = "";
@@ -199,6 +201,7 @@ public class SessionState {
      * WebSocket 断开时释放会话内部状态。
      */
     public void clear() {
+        // 断连时先失效当前 turn，再释放缓冲和适配器，避免后台任务在清理后继续下发。
         invalidateTurn(currentTurnId.get());
         pcmRingBuffer.clear();
         preRollBuffer.clear();

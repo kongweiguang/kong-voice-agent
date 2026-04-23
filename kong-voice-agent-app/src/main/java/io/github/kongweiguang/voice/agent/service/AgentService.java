@@ -24,39 +24,51 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Service for managing agents and chat sessions.
+ * 管理应用侧 Agent 和对话会话。
  *
- * <p>Uses AgentScope's InMemorySession for agent state persistence. Agent instances are created
- * per-request and state is loaded from session. Interruption is handled via SSE connection
- * cancellation.
+ * <p>这里使用 AgentScope 的 InMemorySession 保存 Agent 状态。每次请求创建新的 Agent 实例，
+ * 再从 session 恢复历史；上层 voice pipeline 通过 turnId 控制旧输出失效。</p>
+ *
+ * @author kongweiguang
  */
 @Service
 public class AgentService {
-
+    /**
+     * JSON 解析器，用于尽量保留底层 AgentScope 事件原始结构。
+     */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /**
+     * OpenAI 兼容模型 API Key。
+     */
     @Value("${ai.model.api-key:xxx}")
     private String apiKey;
 
+    /**
+     * OpenAI 兼容模型服务地址。
+     */
     @Value("${ai.model.base-url:http://124.74.245.74:34033/v1}")
     private String baseUrl;
 
+    /**
+     * OpenAI 兼容模型名称。
+     */
     @Value("${ai.model.model-name:Qwen3-Omni-30B-A3B-Instruct}")
     private String modelName;
 
     /**
-     * Session storage for agent state persistence.
+     * AgentScope 会话存储，用于在同一个 voice session 内保留对话记忆。
      */
     private final Session session = new InMemorySession();
 
     /**
-     * Cache for running agents, keyed by sessionId. Cleared after request completes.
+     * 正在运行的 Agent 缓存，key 为 sessionId，请求结束后清理。
      */
     private final ConcurrentHashMap<String, ReActAgent> runningAgents = new ConcurrentHashMap<>();
 
 
     /**
-     * Create a new agent and load state from session.
+     * 创建新的 Agent 实例，并按 voice sessionId 恢复历史状态。
      */
     private ReActAgent createAgent(String sessionId) {
         ReActAgent agent = ReActAgent.builder()
@@ -90,6 +102,7 @@ public class AgentService {
     }
 
     private OpenAIChatModel getModel() {
+        // 使用 OpenAI 兼容模型接口，便于替换本地网关、Ollama 代理或云厂商兼容端点。
         return OpenAIChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(modelName)
@@ -103,12 +116,13 @@ public class AgentService {
     }
 
     /**
-     * Process a chat message.
+     * 处理一条已提交的用户输入，并输出可被 LLM 编排器消费的事件流。
      */
     public Flux<ChatEvent> chat(String sessionId, String message) {
         ReActAgent agent = createAgent(sessionId);
         runningAgents.put(sessionId, agent);
 
+        // voice pipeline 只在 ASR final 或文本 committed 后调用这里，因此 message 已是本轮最终用户文本。
         Msg userMsg = Msg.builder()
                 .name("User")
                 .role(MsgRole.USER)
@@ -121,14 +135,28 @@ public class AgentService {
                         .includeReasoningResult(false)
                         .build();
         return agent.stream(userMsg, streamOptions)
-                .map(event -> ChatEvent.text(MsgUtils.getTextContent(event.getMessage()), true))
+                // AgentScope 的模型事件统一压成 TEXT 事件，后续由 OllamaLlmOrchestrator 转为 LlmChunk。
+                .map(event -> ChatEvent.text(MsgUtils.getTextContent(event.getMessage()), true, rawResponse(event)))
                 .concatWith(Flux.just(ChatEvent.complete()))
                 .doFinally(signal -> {
+                    // 流结束后保存 Agent 记忆，再移除运行态，避免长期占用模型上下文对象。
                     runningAgents.remove(sessionId);
                     agent.saveTo(session, sessionId);
 
                 })
+                // 下游统一接收 ERROR 和 COMPLETE，避免模型异常让响应流悬挂。
                 .onErrorResume(error -> Flux.just(ChatEvent.error(error.getMessage()), ChatEvent.complete()));
+    }
+
+    /**
+     * 尽量保留底层模型事件原貌；序列化失败时退回对象字符串，避免影响主回复链路。
+     */
+    private String rawResponse(Object event) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(event);
+        } catch (Exception ex) {
+            return String.valueOf(event);
+        }
     }
 
 }

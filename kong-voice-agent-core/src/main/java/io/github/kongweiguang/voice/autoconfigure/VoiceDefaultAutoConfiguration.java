@@ -63,7 +63,7 @@ public class VoiceDefaultAutoConfiguration {
                                    EouHistoryProvider historyProvider,
                                    ResourceLoader resourceLoader,
                                    OnnxSessionOptionsFactory sessionOptionsFactory) {
-        if (!config.enabled()) {
+        if (!Boolean.TRUE.equals(config.enabled())) {
             return new NoopEouDetector();
         }
         return new MultilingualEouDetector(config, historyProvider, resourceLoader, sessionOptionsFactory);

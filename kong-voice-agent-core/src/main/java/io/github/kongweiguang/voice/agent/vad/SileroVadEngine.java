@@ -73,6 +73,7 @@ public class SileroVadEngine implements VadEngine {
         try {
             Resource resource = resourceLoader.getResource(config.modelPath());
             if (resource.exists() && resource.isFile()) {
+                // 模型文件存在时优先走真实 ONNX 推理，CPU/CUDA 选择由统一 ONNX 配置控制。
                 File model = resource.getFile();
                 env = OrtEnvironment.getEnvironment();
                 options = sessionOptionsFactory.create();
@@ -125,6 +126,7 @@ public class SileroVadEngine implements VadEngine {
             Map<String, OnnxTensor> tensors = new HashMap<>();
             Map<String, OnnxValue> closable = new HashMap<>();
             try {
+                // Silero 常见导出包含 input、sr、h、c；遇到未知输入时回退 RMS，避免误用错误模型。
                 for (String inputName : session.getInputNames()) {
                     OnnxTensor tensor = switch (inputName) {
                         case "input" -> OnnxTensor.createTensor(environment, new float[][]{normalized});
@@ -142,6 +144,7 @@ public class SileroVadEngine implements VadEngine {
                     return rmsFallbackProbability(samples);
                 }
                 try (OrtSession.Result result = session.run(tensors)) {
+                    // 兼容常见的 [batch, prob] 或 [prob] 输出形态，概率统一裁剪到 0 到 1。
                     Object value = result.get(0).getValue();
                     if (value instanceof float[][] out && out.length > 0 && out[0].length > 0) {
                         captureState(result);

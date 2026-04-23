@@ -12,12 +12,12 @@ public interface TtsOrchestrator {
     /**
      * 将一个 LLM 文本片段合成为一个或多个有序音频块。
      */
-    List<TtsChunk> synthesize(String turnId, int startSeq, String text, boolean lastTextChunk);
+    List<TtsChunk> synthesize(String turnId, Integer startSeq, String text, Boolean lastTextChunk);
 
     /**
      * 将一个 LLM 文本片段合成为流式音频块；默认实现复用非流式接口，兼容已有业务 Bean。
      */
-    default void synthesizeStreaming(String turnId, int startSeq, String text, boolean lastTextChunk,
+    default void synthesizeStreaming(String turnId, Integer startSeq, String text, Boolean lastTextChunk,
                                      Consumer<TtsChunk> chunkConsumer) {
         synthesize(turnId, startSeq, text, lastTextChunk).forEach(chunkConsumer);
     }

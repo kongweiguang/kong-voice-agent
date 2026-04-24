@@ -2,7 +2,6 @@ package io.github.kongweiguang.voice.agent.onnx;
 
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -11,12 +10,18 @@ import lombok.extern.slf4j.Slf4j;
  * @author kongweiguang
  */
 @Slf4j
-@RequiredArgsConstructor
 public class OnnxSessionOptionsFactory {
     /**
      * ONNX Runtime 执行设备配置。
      */
     private final OnnxRuntimeConfig config;
+
+    /**
+     * 创建会话选项工厂。
+     */
+    public OnnxSessionOptionsFactory(OnnxRuntimeConfig config) {
+        this.config = config;
+    }
 
     /**
      * 为单个 ONNX session 创建独立选项，调用方负责随 session 生命周期关闭返回值。

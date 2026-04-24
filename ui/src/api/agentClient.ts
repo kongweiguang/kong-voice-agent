@@ -30,18 +30,6 @@ export interface AgentEventEnvelope<T = Record<string, unknown>> {
   payload?: T;
 }
 
-/** agent_text_chunk 事件载荷。 */
-export interface AgentTextChunkPayload {
-  /** 当前文本片段在本轮回复中的序号。 */
-  seq?: number;
-  /** 当前下发的助手文本片段。 */
-  text?: string;
-  /** 是否为本轮文本输出的最后一个片段。 */
-  isLast?: boolean;
-  /** 底层 LLM 返回的原始响应内容，供联调或问题排查使用。 */
-  rawResponse?: string;
-}
-
 /** 前端登录请求参数。 */
 export interface LoginRequest {
   /** 登录用户名。 */

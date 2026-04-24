@@ -18,12 +18,6 @@ public interface StreamingAsrAdapter extends AutoCloseable {
      */
     AsrUpdate commitTurn(String turnId);
 
-    /**
-     * 取消指定 turn 的 ASR 累计状态。默认无操作，真实适配器可释放缓存或关闭远端流。
-     */
-    default void cancelTurn(String turnId) {
-    }
-
     @Override
     void close();
 }

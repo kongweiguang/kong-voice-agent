@@ -12,8 +12,6 @@ import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
-import io.github.kongweiguang.voice.agent.tts.TtsOrchestrator;
-import io.github.kongweiguang.voice.agent.turn.TurnCancellationCoordinator;
 import io.github.kongweiguang.voice.agent.util.JsonUtils;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
@@ -94,7 +92,7 @@ class VoicePipelineEouTest {
                 (request, consumer) -> replyOnce(request, consumer, llmCalls),
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
-                new InterruptionManager(dispatcher, new TurnCancellationCoordinator(noopTtsOrchestrator())),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.<VoicePipelineHook>of()
@@ -116,10 +114,6 @@ class VoicePipelineEouTest {
 
     private Executor directExecutor() {
         return Runnable::run;
-    }
-
-    private TtsOrchestrator noopTtsOrchestrator() {
-        return (turnId, startSeq, text, lastTextChunk) -> List.of();
     }
 
     private byte[] pcm() {

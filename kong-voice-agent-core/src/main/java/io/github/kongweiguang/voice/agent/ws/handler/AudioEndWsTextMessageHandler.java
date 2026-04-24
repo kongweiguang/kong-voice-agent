@@ -3,7 +3,6 @@ package io.github.kongweiguang.voice.agent.ws.handler;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.ws.WsMessageType;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,12 +11,18 @@ import org.springframework.stereotype.Component;
  * @author kongweiguang
  */
 @Component
-@RequiredArgsConstructor
 public class AudioEndWsTextMessageHandler implements WsTextMessageHandler {
     /**
      * 语音流水线服务，负责 ASR final 和 LLM/TTS 后续编排。
      */
     private final VoicePipelineService pipelineService;
+
+    /**
+     * 创建音频结束消息处理策略。
+     */
+    public AudioEndWsTextMessageHandler(VoicePipelineService pipelineService) {
+        this.pipelineService = pipelineService;
+    }
 
     /**
      * 返回内置 audio_end 消息类型。

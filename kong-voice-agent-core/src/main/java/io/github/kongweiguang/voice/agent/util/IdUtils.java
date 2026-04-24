@@ -142,7 +142,7 @@ public final class IdUtils {
          */
         private final long nodeId;
         /**
-         * 当前时间毫秒供应器，允许生成器按调用方提供的时间源工作。
+         * 当前时间毫秒供应器，测试中可替换以覆盖边界场景。
          */
         private final LongSupplier currentTimeMillis;
         /**

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.function.Consumer;
 
 /**
- * app 模块内的默认 LLM 集成实现，负责把应用侧 Agent 输出转换为 core 流水线可消费的文本片段。
+ * app 模块内的确定性 LLM 模拟实现，用于验证流水线顺序和 turn 防护。
  *
  * @author kongweiguang
  */
@@ -29,7 +29,7 @@ public class OllamaLlmOrchestrator implements LlmOrchestrator {
     public void stream(LlmRequest request, Consumer<LlmChunk> chunkConsumer) {
         agentService
                 .chat(request.sessionId(), request.finalTranscript())
-                .doOnNext(event -> {
+                .subscribe(event -> {
                     // TEXT 事件会被原样转成 Agent 文本 chunk，后续继续进入 TTS。
                     if ("TEXT".equals(event.getType())) {
                         chunkConsumer.accept(
@@ -52,8 +52,6 @@ public class OllamaLlmOrchestrator implements LlmOrchestrator {
                                 ));
                     }
 
-                })
-                // LlmOrchestrator 契约要求方法返回前完成回调，便于 core 统一收口状态和异常。
-                .blockLast();
+                });
     }
 }

@@ -30,7 +30,7 @@ public record EouConfig(
         Integer inferenceTimeoutMs,
         String language) {
     /**
-     * 归一化默认值，保证缺省配置下仍具备可运行的 EOU 策略。
+     * 归一化默认值，保证开源用户不准备模型时也能启动 mock 闭环。
      */
     public EouConfig {
         if (enabled == null) {

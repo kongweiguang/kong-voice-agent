@@ -3,7 +3,6 @@ package io.github.kongweiguang.voice.agent.ws.handler;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.ws.WsMessageType;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,12 +11,18 @@ import org.springframework.stereotype.Component;
  * @author kongweiguang
  */
 @Component
-@RequiredArgsConstructor
 public class TextWsTextMessageHandler implements WsTextMessageHandler {
     /**
      * 语音流水线服务，负责将文本转为 committed turn 并进入 LLM/TTS。
      */
     private final VoicePipelineService pipelineService;
+
+    /**
+     * 创建文本输入消息处理策略。
+     */
+    public TextWsTextMessageHandler(VoicePipelineService pipelineService) {
+        this.pipelineService = pipelineService;
+    }
 
     /**
      * 返回内置 text 消息类型。

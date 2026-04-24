@@ -11,8 +11,6 @@ import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
-import io.github.kongweiguang.voice.agent.tts.TtsOrchestrator;
-import io.github.kongweiguang.voice.agent.turn.TurnCancellationCoordinator;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
 import io.github.kongweiguang.voice.agent.util.JsonUtils;
@@ -62,7 +60,7 @@ class VoicePipelineTextInputTest {
                 this::replyOnce,
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
-                interruptionManager(dispatcher),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.of(hook)
@@ -96,7 +94,7 @@ class VoicePipelineTextInputTest {
                 this::replyOnce,
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
-                interruptionManager(dispatcher),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -126,7 +124,7 @@ class VoicePipelineTextInputTest {
                     throw new IllegalStateException("Kokoro TTS 返回了空音频");
                 },
                 dispatcher,
-                interruptionManager(dispatcher),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -161,7 +159,7 @@ class VoicePipelineTextInputTest {
                     throw new AssertionError("空完成片段不应该触发 TTS");
                 },
                 dispatcher,
-                interruptionManager(dispatcher),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -198,7 +196,7 @@ class VoicePipelineTextInputTest {
                     return List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text));
                 },
                 dispatcher,
-                interruptionManager(dispatcher),
+                new InterruptionManager(dispatcher),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -215,49 +213,12 @@ class VoicePipelineTextInputTest {
         assertThat(events.stream().filter(node -> "tts_audio_chunk".equals(node.get("type").asText()))).hasSize(4);
     }
 
-    /**
-     * agent_text_chunk 需要带出底层 LLM 原始响应，方便前端联调和问题排查。
-     */
-    @Test
-    @DisplayName("agent_text_chunk 会返回原始 LLM 响应")
-    void includesRawResponseInAgentTextChunk() throws Exception {
-        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
-        VoicePipelineService service = new VoicePipelineService(
-                new NoopVadEngine(),
-                new NoopEouDetector(),
-                eouConfig(),
-                (request, consumer) -> consumer.accept(new LlmChunk(request.turnId(), 0, "你好", true, "{\"id\":\"evt_1\",\"delta\":\"你好\"}")),
-                (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
-                dispatcher,
-                interruptionManager(dispatcher),
-                directExecutor(),
-                directExecutor(),
-                List.of()
-        );
-        SessionState session = TestSessionStates.create("s1");
-        CapturingWebSocketSession ws = new CapturingWebSocketSession();
-
-        service.acceptText(session, ws, "你好");
-
-        JsonNode textChunk = findEvent(ws.sentEvents(), "agent_text_chunk");
-        assertThat(textChunk.at("/payload/text").asText()).isEqualTo("你好");
-        assertThat(textChunk.at("/payload/rawResponse").asText()).isEqualTo("{\"id\":\"evt_1\",\"delta\":\"你好\"}");
-    }
-
     private void replyOnce(LlmRequest request, Consumer<LlmChunk> consumer) {
         consumer.accept(new LlmChunk(request.turnId(), 0, "收到：" + request.finalTranscript(), true));
     }
 
     private Executor directExecutor() {
         return Runnable::run;
-    }
-
-    private InterruptionManager interruptionManager(PlaybackDispatcher dispatcher) {
-        return new InterruptionManager(dispatcher, new TurnCancellationCoordinator(noopTtsOrchestrator()));
-    }
-
-    private TtsOrchestrator noopTtsOrchestrator() {
-        return (turnId, startSeq, text, lastTextChunk) -> List.of();
     }
 
     private EouConfig eouConfig() {

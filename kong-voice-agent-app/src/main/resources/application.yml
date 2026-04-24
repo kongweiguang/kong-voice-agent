@@ -47,7 +47,7 @@ kong-voice-agent:
     language: zh
   asr:
     dashscope:
-      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:sk-b88791c7c5234b8bbf5984422cae1045}}
+      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
       base-url: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       chat-completions-path: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_CHAT_COMPLETIONS_PATH:/chat/completions}
       model: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_MODEL:qwen3-asr-flash}
@@ -56,7 +56,7 @@ kong-voice-agent:
       timeout-ms: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_TIMEOUT_MS:15000}
   tts:
     dashscope:
-      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:sk-b88791c7c5234b8bbf5984422cae1045}}
+      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
       base-url: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com}
       generation-path: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_GENERATION_PATH:/api/v1/services/aigc/multimodal-generation/generation}
       model: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_MODEL:qwen3-tts-flash}

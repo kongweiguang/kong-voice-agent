@@ -39,7 +39,7 @@ flowchart TB
     Docs -.-> Core
 ```
 
-当前分层的核心原则是：`kong-voice-agent-core` 是面向多个系统复用的框架层，保存稳定协议、状态机、运行态和扩展接口；`kong-voice-agent-app` 是应用层示例，负责启动、认证、端点注册和默认服务集成；`ui/` 只作为联调和产品化前端参考，不承载后端 session 状态。
+当前分层的核心原则是：`kong-voice-agent-core` 保存稳定协议、状态机、运行态和扩展接口；`kong-voice-agent-app` 负责启动、认证、端点注册和默认服务集成；`ui/` 只作为联调和产品化前端参考，不承载后端 session 状态。
 
 ## 数据流总览
 
@@ -78,7 +78,7 @@ flowchart TD
     Interruption1 -->|"playback_stop / turn_interrupted"| Dispatcher
     TextInput -->|"nextTurnId<br/>USER_TURN_COMMITTED"| TextCommitted["asr_final(source=text)"]
     TextCommitted --> Dispatcher
-    TextCommitted --> ResponseOrchestrator["AgentResponseOrchestrator<br/>LLM/TTS 编排与错误收口"]
+    TextCommitted --> LlmStart["startLlmAfterCommit"]
 
     AudioInput -->|"写入 ring buffer / pre-roll"| AudioBuffers["CircularByteBuffer<br/>PreRollBuffer"]
     AudioInput -->|"audioTaskExecutor 虚拟线程"| AudioProcess["processAudioLocked<br/>同 session 串行"]
@@ -101,14 +101,14 @@ flowchart TD
     StateEvents --> Dispatcher
     TurnManager -->|"endpointReached"| AudioCommitted["USER_TURN_COMMITTED"]
     AudioCommitted --> AsrCommit["StreamingAsrAdapter.commitTurn"]
-    AudioEnd -->|"audioTaskExecutor<br/>同 session 串行"| AsrCommit
+    AudioEnd --> AsrCommit
     AsrCommit -->|"final transcript"| AsrFinal["asr_final(source=audio)"]
     AsrFinal --> Dispatcher
-    AsrFinal --> ResponseOrchestrator
+    AsrFinal --> LlmStart
 
-    ResponseOrchestrator -->|"校验 fin 且 turnId 当前有效"| Thinking["agent_thinking"]
+    LlmStart -->|"校验 fin 且 turnId 当前有效"| Thinking["agent_thinking"]
     Thinking --> Dispatcher
-    ResponseOrchestrator -->|"agentTaskExecutor 虚拟线程"| Llm["LlmOrchestrator.stream"]
+    LlmStart -->|"agentTaskExecutor 虚拟线程"| Llm["LlmOrchestrator.stream"]
     Llm -->|"LlmChunk"| LlmTurnCheck{"isCurrentTurn(turnId)?"}
     LlmTurnCheck -->|否| DropLlm["丢弃旧 turn LLM 输出"]
     LlmTurnCheck -->|是| AgentText["agent_text_chunk"]
@@ -123,8 +123,6 @@ flowchart TD
 
     Llm -->|"异常"| LlmError["error(llm_failed)"]
     Tts -->|"异常"| TtsError["error(tts_failed)"]
-    AsrCommit -->|"异常"| AsrError["error(asr_failed)"]
-    AsrError --> Dispatcher
     LlmError --> Dispatcher
     TtsError --> Dispatcher
 ```
@@ -136,7 +134,7 @@ flowchart TD
 3. `TextWsTextMessageHandler` 调用 `VoicePipelineService.acceptText`。
 4. 如果 Agent 正在播报，先通过 `InterruptionManager` 失效旧 `turnId`，并下发 `playback_stop` 与 `turn_interrupted`。
 5. 服务端创建新的 `turnId`，状态进入 `USER_TURN_COMMITTED`。
-6. 文本输入被包装为 `asr_final(source=text)`，然后进入 `AgentResponseOrchestrator`。
+6. 文本输入被包装为 `asr_final(source=text)`，然后进入 `startLlmAfterCommit`。
 7. LLM 输出 `agent_text_chunk`，每个非空文本片段继续提交给 TTS。
 8. TTS 输出 `tts_audio_chunk(audioBase64)`，客户端按 `turnId` 和 `seq` 播放。
 
@@ -152,20 +150,19 @@ flowchart TD
 6. 有效音频进入每 session 独立的 `StreamingAsrAdapter.acceptAudio`，真实流式 ASR 可以返回 `asr_partial`。
 7. 静音候选阶段，`maybePredictEou` 会在满足最小静音窗口且存在 partial 文本时调用 `EouDetector`。
 8. `TurnManager` 结合 VAD、ASR、EOU 和时间窗口产出状态迁移或提交事件。
-9. 达到端点或收到 `audio_end` 后，服务端在音频处理执行器内调用 `StreamingAsrAdapter.commitTurn` 得到最终文本，并下发 `asr_final(source=audio)`；ASR 提交失败会转换为 `error(asr_failed)`。
+9. 达到端点后，服务端调用 `StreamingAsrAdapter.commitTurn` 得到最终文本，并下发 `asr_final(source=audio)`。
 10. 音频 final 进入同一条 LLM/TTS 下游链路。
 
 ## 打断与 turnId 隔离
 
 打断有两种入口：客户端主动发送 `interrupt`，或者 Agent 播报中 VAD 检测到用户重新说话。两者最终都走 `InterruptionManager`：
 
-1. 将旧 `turnId` 放入 invalid turn 集合，并通过 `cancelTurn` 释放 ASR/TTS 的 turn 级缓存。
+1. 将旧 `turnId` 放入 invalid turn 集合。
 2. 将 `agentSpeaking` 置为 `false`，状态切到 `INTERRUPTED`。
 3. 下发 `playback_stop(oldTurnId)` 和 `turn_interrupted(oldTurnId)`。
 4. 创建新的 `turnId`，状态切到 `USER_PRE_SPEECH`。
 
 所有 ASR、LLM、TTS 异步结果发布前都必须通过 `SessionState.isCurrentTurn(turnId)` 校验。校验失败的旧结果会被直接丢弃，不再污染当前 turn 的文本、音频或状态。
-如果客户端在空闲状态发送 `interrupt`，服务端会将其视为 no-op，不创建新的用户 turn。
 
 ## 下行事件
 

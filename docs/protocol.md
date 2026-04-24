@@ -1,6 +1,6 @@
 # Protocol
 
-这份文档定义 WebSocket 协议的消息形态、方向、示例和约束。当前版本优先保证本地可运行闭环，但协议本身要保持对真实 ASR / LLM / TTS 的可替换性。
+这份文档定义 WebSocket 协议的消息形态、方向、示例和约束。当前版本以 mock 闭环为优先，但协议本身要保持对真实 ASR / LLM / TTS 的可替换性。
 
 ## 基本约定
 
@@ -18,7 +18,7 @@
 
 ## 登录协议
 
-当前版本提供应用侧固定账号登录，用于本地示例部署和前端联调。默认账号来自 `kong-voice-agent.auth.fixed-user`：
+当前版本提供应用侧固定账号登录，用于本地 mock 闭环和前端联调。默认账号来自 `kong-voice-agent.auth.fixed-user`：
 
 | 配置项 | 默认值 | 环境变量 |
 | --- | --- | --- |
@@ -92,7 +92,6 @@ ws://localhost:9877/ws/agent?token=<login-token>
 ### 2. `interrupt`
 
 用户主动中断当前播报。
-如果当前连接没有活跃 turn 且 Agent 没有在播报，服务端会把该消息视为 no-op，不创建新的用户 turn，也不会下发 `USER_PRE_SPEECH`。
 
 ```json
 {
@@ -106,7 +105,6 @@ ws://localhost:9877/ws/agent?token=<login-token>
 ### 3. `audio_end`
 
 通知当前音频流结束。
-服务端收到后会在音频处理执行器中异步提交当前 turn 的 ASR final，避免 WebSocket 文本消息线程被远端 ASR 调用阻塞。
 
 ```json
 {
@@ -253,8 +251,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
   "payload": {
     "seq": 0,
     "text": "我已收到你的语音内容：",
-    "isLast": false,
-    "rawResponse": "{\"id\":\"evt_001\",\"choices\":[{\"delta\":{\"content\":\"我已收到你的语音内容：\"}}]}"
+    "isLast": false
   }
 }
 ```
@@ -371,7 +368,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 7. `text` 上行消息直接创建 committed turn，不经过 ASR partial 阶段，但仍必须等到该提交边界后才能启动 LLM/TTS。
 8. WebSocket token 只在当前进程内存中校验；服务重启、token 缺失或 token 无效时，客户端必须重新登录后再连接。
 
-ASR/LLM/TTS 位于异步流水线中，运行期失败必须转换为下行 `error` 事件，不能让异常继续冒泡到 WebSocket 或 Reactor 线程。当前 ASR 提交失败使用 `code=asr_failed`，TTS 合成失败使用 `code=tts_failed`，LLM 启动或同步调用失败使用 `code=llm_failed`；客户端收到这类错误后应结束当前 turn 的识别、思考或播放状态，并等待用户重新输入。
+LLM/TTS 位于异步下游回调中，运行期失败必须转换为下行 `error` 事件，不能让异常继续冒泡到 Reactor 订阅线程。当前 TTS 合成失败使用 `code=tts_failed`，LLM 启动或同步调用失败使用 `code=llm_failed`；客户端收到这类错误后应结束当前 turn 的思考或播放状态，并等待用户重新输入。
 
 LLM 文本可以继续按 token 或短片段流式下发 `agent_text_chunk`。当前流水线会把每个非空 LLM 文本片段提交给 TTS；默认 DashScope Qwen-TTS 适配器会按 turnId 累计文本，遇到句子边界或最后一个 chunk 后再启动合成。`kong-voice-agent.tts.dashscope.streaming-enabled=true` 时，适配器通过 DashScope SSE 流式接口逐块读取音频并立即下发多个 `tts_audio_chunk`；关闭后同样按句累计，但每句只下发一个非流式音频块。
 

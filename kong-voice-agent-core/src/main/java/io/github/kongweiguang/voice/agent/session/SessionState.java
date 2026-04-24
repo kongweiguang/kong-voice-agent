@@ -19,7 +19,6 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -33,11 +32,6 @@ import java.util.concurrent.locks.ReentrantLock;
 @Setter
 @Accessors(fluent = true)
 public class SessionState {
-    /**
-     * 单个长连接内最多保留的失效 turn 数量，避免多轮对话后集合无限增长。
-     */
-    private static final int MAX_INVALID_TURNS = 512;
-
     /**
      * 服务端生成的语音会话标识。
      */
@@ -73,17 +67,10 @@ public class SessionState {
      * 已失效 turn 集合，用于异步回调发布前的过期判断。
      */
     private final Set<String> invalidTurns = ConcurrentHashMap.newKeySet();
-
-    /**
-     * 按失效顺序记录 turnId，用于在长连接中清理过旧的失效记录。
-     */
-    private final ConcurrentLinkedDeque<String> invalidTurnOrder = new ConcurrentLinkedDeque<>();
-
     /**
      * turn 切换会同时重置多项状态，使用显式锁保证这些变更整体可见。
      */
     private final ReentrantLock turnLock = new ReentrantLock();
-
     /**
      * 同一连接内的音频块必须按顺序推进 VAD/ASR/TurnManager，避免虚拟线程并发打乱状态机。
      */
@@ -178,8 +165,7 @@ public class SessionState {
             String previous = currentTurnId.get();
             if (previous != null) {
                 // 新 turn 开始即失效旧 turn，防止旧 ASR/LLM/TTS 异步回调继续发布。
-                invalidateTurn(previous);
-                asrAdapter.cancelTurn(previous);
+                invalidTurns.add(previous);
             }
             String next = IdUtils.snowflakeIdStr();
             // turn 级文本和 EOU 缓存必须随新 turn 重置，避免跨轮复用旧用户输入。
@@ -207,10 +193,7 @@ public class SessionState {
      */
     public void invalidateTurn(String turnId) {
         if (turnId != null) {
-            if (invalidTurns.add(turnId)) {
-                invalidTurnOrder.addLast(turnId);
-                trimInvalidTurns();
-            }
+            invalidTurns.add(turnId);
         }
     }
 
@@ -220,7 +203,6 @@ public class SessionState {
     public void clear() {
         // 断连时先失效当前 turn，再释放缓冲和适配器，避免后台任务在清理后继续下发。
         invalidateTurn(currentTurnId.get());
-        asrAdapter.cancelTurn(currentTurnId.get());
         pcmRingBuffer.clear();
         preRollBuffer.clear();
         partialTranscript = "";
@@ -293,19 +275,6 @@ public class SessionState {
             task.run();
         } finally {
             audioProcessingLock.unlock();
-        }
-    }
-
-    /**
-     * 清理过旧的失效 turn。旧 turnId 本身不会再次成为 currentTurnId，因此移除记录不影响隔离。
-     */
-    private void trimInvalidTurns() {
-        while (invalidTurns.size() > MAX_INVALID_TURNS) {
-            String expired = invalidTurnOrder.pollFirst();
-            if (expired == null) {
-                return;
-            }
-            invalidTurns.remove(expired);
         }
     }
 }

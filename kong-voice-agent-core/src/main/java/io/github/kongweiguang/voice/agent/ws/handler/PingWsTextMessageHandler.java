@@ -6,7 +6,6 @@ import io.github.kongweiguang.voice.agent.model.payload.PongPayload;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.ws.WsMessageType;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,12 +14,18 @@ import org.springframework.stereotype.Component;
  * @author kongweiguang
  */
 @Component
-@RequiredArgsConstructor
 public class PingWsTextMessageHandler implements WsTextMessageHandler {
     /**
      * WebSocket 下行事件发送器。
      */
     private final PlaybackDispatcher dispatcher;
+
+    /**
+     * 创建心跳消息处理策略。
+     */
+    public PingWsTextMessageHandler(PlaybackDispatcher dispatcher) {
+        this.dispatcher = dispatcher;
+    }
 
     /**
      * 返回内置 ping 消息类型。

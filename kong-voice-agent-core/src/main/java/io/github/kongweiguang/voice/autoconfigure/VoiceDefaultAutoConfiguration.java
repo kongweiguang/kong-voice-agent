@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.ResourceLoader;
 
 /**
- * voice 公共模块的 VAD 与 EOU 默认装配。ASR、LLM、TTS 的 mock 或业务实现由 app 模块负责提供。
+ * voice 公共模块的 VAD 与 EOU 默认装配。ASR、LLM、TTS 的具体实现由上层接入模块提供。
  *
  * @author kongweiguang
  */

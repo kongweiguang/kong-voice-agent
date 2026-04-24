@@ -2,7 +2,7 @@
 
 Kong Voice Agent 是一个面向生产场景设计的 Java Voice Agent 后端框架，基于 Java 21、Spring Boot 3 和 WebSocket 实现，支持文本与 PCM 音频输入，内置 Session 与 turnId 隔离、VAD、流式 ASR、LLM、TTS、打断流程和 React 前端联调界面。
 
-项目围绕可替换能力接口设计，业务侧可以自定义接入 ASR、LLM、TTS、VAD 等真实服务；当前版本同时提供可独立运行的 mock 闭环，便于快速验证协议、状态机和前后端联调流程。
+项目围绕可替换能力接口设计，业务侧可以自定义接入 ASR、LLM、TTS、VAD 等真实服务。`kong-voice-agent-core` 是面向多个系统复用的框架层，负责稳定协议、状态机、运行态和扩展接口；`kong-voice-agent-app` 是应用层示例，负责启动、认证、默认集成和联调入口。
 
 ## 当前能力
 
@@ -171,6 +171,8 @@ socket.addEventListener("message", (event) => {
 
 更多字段和事件示例见 [docs/protocol.md](docs/protocol.md)。
 
+当前 `agent_text_chunk` 除 `text`、`seq`、`isLast` 外，还会透传 `payload.rawResponse`，用于前端联调时查看底层 LLM 的原始响应内容。
+
 ## 音频输入说明
 
 服务端默认按以下格式处理 WebSocket 二进制音频帧，实际值来自 `kong-voice-agent.audio` 配置：
@@ -206,8 +208,8 @@ React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频
 
 两个模块的职责：
 
-- `kong-voice-agent-core`：承载 Session、TurnManager、VAD、EOU、WebSocket 处理器、协议模型、ASR / LLM / TTS 抽象和 `VoicePipelineHook`。
-- `kong-voice-agent-app`：承载 Spring Boot 应用入口、`/ws/agent` 注册、运行配置、默认 DashScope Qwen-ASR / Qwen-TTS 接入和 LLM 实现。
+- `kong-voice-agent-core`：框架层，承载 Session、TurnManager、VAD、EOU、WebSocket 处理器、协议模型、ASR / LLM / TTS 抽象和 `VoicePipelineHook`，设计目标是被多个系统复用。
+- `kong-voice-agent-app`：应用层示例，承载 Spring Boot 应用入口、`/ws/agent` 注册、运行配置和默认服务集成，用来演示如何接入 core。
 
 ## 配置入口
 
@@ -274,7 +276,7 @@ kong-voice-agent:
     language: zh
 ```
 
-`kong-voice-agent.auth.fixed-user` 是当前应用侧固定账号配置，默认只用于本地 mock 闭环和前端联调。公开部署时必须通过环境变量覆盖默认密码：
+`kong-voice-agent.auth.fixed-user` 是当前应用侧固定账号配置，默认只用于本地示例部署和前端联调。公开部署时必须通过环境变量覆盖默认密码：
 
 ```bash
 KONG_VOICE_AGENT_AUTH_FIXED_USER_ACCOUNT_ID=your-account-id
@@ -322,7 +324,7 @@ mvn clean package -Donnxruntime.artifactId=onnxruntime_gpu
 KONG_VOICE_AGENT_VAD_MODEL_PATH=file:/absolute/path/to/silero_vad.onnx
 ```
 
-没有模型文件时，项目仍可启动并使用 RMS fallback，适合新手先完成 mock 闭环验证。
+没有模型文件时，项目仍可启动并使用 RMS fallback，适合先完成本地链路验证。
 
 EOU 用于在 VAD 发现静音候选后判断“用户这句话是否已经说完”。默认 provider 是 LiveKit MultilingualModel 风格的本地 ONNX 实现，模型和 tokenizer 需要放在 `models/livekit-turn-detector/`；如果文件缺失且 `fallback-enabled=true`，系统会回到原静音端点行为。需要指定模型时可以设置：
 
@@ -335,7 +337,7 @@ KONG_VOICE_AGENT_EOU_TOKENIZER_PATH=file:/absolute/path/to/tokenizer.json
 
 应用模块默认直接对接阿里云 DashScope：
 
-- ASR：`qwen3-asr-flash`，在 `audio_end` 或端点提交时把累计 PCM 包装成 WAV，再以 Base64 Data URL 调用 OpenAI 兼容 `/chat/completions`。
+- ASR：`qwen3-asr-flash`，在 `audio_end` 或端点提交时通过音频处理执行器异步提交，把累计 PCM 包装成 WAV，再以 Base64 Data URL 调用 OpenAI 兼容 `/chat/completions`。
 - TTS：`qwen3-tts-flash`，按 turnId 累计 LLM 文本到句子边界或最后一个 chunk，默认通过 DashScope SSE 流式 multimodal generation 接口读取音频分片，并把每个分片作为 `tts_audio_chunk.payload.audioBase64` 下发。若关闭流式模式，则同样按句累计后一次性下发该句音频。
 
 启动前需要配置 DashScope API Key：
@@ -356,7 +358,7 @@ $env:DASHSCOPE_API_KEY="sk-xxxx"
 export KONG_VOICE_AGENT_DASHSCOPE_API_KEY=sk-xxxx
 ```
 
-外部服务不可用、鉴权失败或返回空音频时会明确失败，不回退到假转写或假音频；TTS 下游失败会通过 WebSocket 下发 `error(code=tts_failed)`，当前连接不会因为 Reactor 回调异常而中断。默认 DashScope TTS 已内置句子级文本积攒，未到句末的非末尾 LLM 片段不会立即合成，避免播放出现过短音频片段导致的不连贯。
+外部服务不可用、鉴权失败或返回空音频时会明确失败，不回退到假转写或假音频；ASR 提交失败会通过 WebSocket 下发 `error(code=asr_failed)`，TTS 下游失败会下发 `error(code=tts_failed)`，当前连接不会因为远端回调异常而中断。默认 DashScope TTS 已内置句子级文本积攒，未到句末的非末尾 LLM 片段不会立即合成，避免播放出现过短音频片段导致的不连贯。
 
 常用配置项：
 
@@ -388,6 +390,8 @@ export KONG_VOICE_AGENT_DASHSCOPE_API_KEY=sk-xxxx
 - `LlmOrchestrator`：接入真实大模型流式生成
 - `TtsOrchestrator`：接入真实 TTS 流式合成
 - `VoicePipelineHook`：观察音频、文本、turn commit、LLM、TTS 和打断节点，适合做日志、审计、埋点和业务上下文记录
+
+`LlmOrchestrator.stream` 和 `TtsOrchestrator.synthesizeStreaming` 的回调需要在方法返回前完成，或通过同步异常暴露失败；如果底层 SDK 是异步订阅模型，适配器应在接口方法内部等待完成。`StreamingAsrAdapter.cancelTurn` 和 `TtsOrchestrator.cancelTurn` 用于释放被打断 turn 的 PCM、待合成文本或远端流状态，长连接场景下建议真实实现显式清理资源。
 
 应用默认 LLM 提示会要求模型使用用户输入语言回答；用户用中文提问时，应返回自然中文。若替换模型后仍出现中文问题英文回答，优先检查模型能力、对话模板和 `ai.model.model-name` 指向的实际模型。
 
@@ -443,6 +447,7 @@ mvn -pl kong-voice-agent-core "-Dkong.voice-agent.model-tests=true" "-Dtest=Mult
 - EOU 自动装配、prompt 构造和 endpointing 边界
 - turn committed 后才进入 LLM
 - interruption 后旧 turn 结果被丢弃
+- audio_end 异步 ASR 提交、ASR 失败错误事件、空闲 interrupt no-op 和 turn 取消资源释放
 - WebSocket 消息解析和处理器注册边界
 
 后续新增协议、状态机、异步 turnId 隔离、打断流程或公开扩展点时，需要同步补充测试。

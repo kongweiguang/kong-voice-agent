@@ -13,7 +13,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "kong-voice-agent.vad")
 public record VadConfig(String modelPath, Double speechThreshold, Boolean fallbackEnabled) {
     /**
-     * 归一化外部配置，保证开源用户缺省启动时仍能进入 mock 闭环。
+     * 归一化外部配置，保证缺省配置下仍具备可运行的 VAD 策略。
      */
     public VadConfig {
         if (modelPath == null || modelPath.isBlank()) {

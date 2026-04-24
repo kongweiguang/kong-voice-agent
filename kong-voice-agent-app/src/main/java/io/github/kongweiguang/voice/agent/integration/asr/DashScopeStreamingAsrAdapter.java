@@ -67,6 +67,16 @@ public class DashScopeStreamingAsrAdapter implements StreamingAsrAdapter {
     }
 
     /**
+     * 释放被打断或被新 turn 取代的 PCM 缓存，避免长连接多轮对话持续占用内存。
+     */
+    @Override
+    public void cancelTurn(String turnId) {
+        if (turnId != null) {
+            pcmByTurn.remove(turnId);
+        }
+    }
+
+    /**
      * 关闭 ASR 时释放累计音频状态。
      */
     @Override

@@ -3,6 +3,7 @@ package io.github.kongweiguang.voice.agent.eou.livekit;
 import io.github.kongweiguang.voice.agent.eou.ConversationTurn;
 import io.github.kongweiguang.voice.agent.eou.EouContext;
 import io.github.kongweiguang.voice.agent.eou.EouHistoryProvider;
+import lombok.RequiredArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.List;
  *
  * @author kongweiguang
  */
+@RequiredArgsConstructor
 public class LiveKitEouPromptBuilder {
     /**
      * 参与 EOU 判断的最近对话 turn 数量。
@@ -22,13 +24,6 @@ public class LiveKitEouPromptBuilder {
      * 历史记录读取扩展点，core 自身不记录业务对话历史。
      */
     private final EouHistoryProvider historyProvider;
-
-    /**
-     * 创建 LiveKit prompt 构造器。
-     */
-    public LiveKitEouPromptBuilder(EouHistoryProvider historyProvider) {
-        this.historyProvider = historyProvider;
-    }
 
     /**
      * 构建供 tokenizer 编码的 prompt。

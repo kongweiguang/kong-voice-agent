@@ -221,8 +221,8 @@ socket.send(pcmArrayBuffer);
 | `asr_partial` | 流式中间转写 | 只展示临时字幕，不触发业务提交 |
 | `asr_final` | 最终用户输入 | 固化用户气泡或转写结果 |
 | `agent_thinking` | Agent 开始生成 | 展示思考中状态 |
-| `agent_text_chunk` | Agent 文本片段 | 按 `seq` 追加到当前 Agent 气泡 |
-| `tts_audio_chunk` | Agent 音频片段 | 按 `seq` 播放或排队；mock 音频仅用于链路验证 |
+| `agent_text_chunk` | Agent 文本片段 | 按 `seq` 追加到当前 Agent 气泡；如需联调可读取 `payload.rawResponse` 查看底层 LLM 原始响应 |
+| `tts_audio_chunk` | Agent 音频片段 | 按 `seq` 播放或排队；音频内容由当前 TTS 实现决定 |
 | `playback_stop` | 停止旧播报 | 清空当前播放队列 |
 | `turn_interrupted` | 旧 turn 被打断 | 标记旧 turn 失效 |
 | `error` | 协议或运行错误 | 展示错误并写入日志；`tts_failed` 表示 DashScope Qwen-TTS 或自定义 TTS 服务不可用、鉴权失败或返回空音频 |

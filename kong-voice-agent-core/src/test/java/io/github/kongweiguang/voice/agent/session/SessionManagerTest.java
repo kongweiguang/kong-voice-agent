@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.security.Principal;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -106,6 +107,32 @@ class SessionManagerTest {
         manager.create(new StubWebSocketSession());
 
         assertThat(asrFormat.get()).isEqualTo(configuredFormat);
+    }
+
+    /**
+     * 长连接持续创建 turn 时，失效 turn 记录不能无限增长。
+     */
+    @Test
+    @DisplayName("失效 turn 记录有数量上限")
+    void limitsInvalidTurnHistory() {
+        SessionState session = new SessionState("s1", AudioFormatSpec.DEFAULT, (sessionId, format) -> new NoopStreamingAsrAdapter());
+
+        for (int i = 0; i < 700; i++) {
+            session.nextTurnId();
+        }
+
+        assertThat(invalidTurnCount(session)).isLessThanOrEqualTo(512);
+    }
+
+    @SuppressWarnings("unchecked")
+    private int invalidTurnCount(SessionState session) {
+        try {
+            Field field = SessionState.class.getDeclaredField("invalidTurns");
+            field.setAccessible(true);
+            return ((java.util.Set<String>) field.get(session)).size();
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("读取 SessionState.invalidTurns 失败", ex);
+        }
     }
 
     /**

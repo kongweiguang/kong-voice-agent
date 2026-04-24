@@ -7,7 +7,7 @@ package io.github.kongweiguang.voice.agent.llm;
  * @param seq    当前文本片段在本轮回复中的序号
  * @param text   当前 LLM 生成的文本片段
  * @param last   是否为本轮 LLM 回复的最后一个文本片段
- * @param rawResponse LLM 供应商或应用侧 Agent 返回的原始响应内容，用于 hook、审计和问题排查
+ * @param rawResponse LLM 提供方或上层接入实现返回的原始响应内容，用于 hook、审计和问题排查
  * @author kongweiguang
  */
 public record LlmChunk(String turnId, Integer seq, String text, Boolean last, String rawResponse) {

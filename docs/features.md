@@ -9,15 +9,15 @@
 | 工程骨架 | 已实现 | Spring Boot 3、Java 21、Maven 3.9+ 多模块、Maven Enforcer、JDK 虚拟线程执行器、基础日志、可打包 app jar | 按需补 CI / profile |
 | 固定账号认证 | 已实现 | `POST /api/auth/login` 使用固定账号签发进程内 token，WebSocket 通过 `/ws/agent?token=<login-token>` 鉴权 | 后续替换真实账号体系、补 token 过期和撤销策略 |
 | WebSocket 接入 | 已实现 | `/ws/agent?token=<login-token>` 支持握手 token 鉴权、策略注册表驱动的 JSON 控制消息、文本输入、自定义 type 和二进制 PCM | 增加端到端 WebSocket 自动化测试 |
-| Session 与 turnId | 已实现 | 每连接独立 session，SessionManager 以 WebSocket id 为主索引并提供业务 sessionId 查询索引，使用雪花 ID 字符串维护 current turn 和旧 turn 失效集合 | 丰富并发与断连测试 |
+| Session 与 turnId | 已实现 | 每连接独立 session，SessionManager 以 WebSocket id 为主索引并提供业务 sessionId 查询索引，使用雪花 ID 字符串维护 current turn 和带上限的旧 turn 失效集合 | 丰富并发与断连测试 |
 | 通用 ID 工具 | 已实现 | `IdUtils` 支持不可预测 session id 和 64 位趋势递增雪花 ID，雪花节点号可通过系统属性或环境变量指定 | 生产多实例部署时显式分配节点号 |
 | 音频基础设施 | 已实现 | PCM s16le 转换、RMS、ring buffer、pre-roll、时长换算，音频格式从 `kong-voice-agent.audio` 绑定到 `AudioFormatSpec` | 增加异常格式校验策略 |
 | VAD | 已实现 | Silero ONNX 加载入口，默认从项目 `models/` 读取，可通过 `kong-voice-agent.onnx` 切换 CUDA GPU，模型缺失时 RMS fallback | 放入真实模型并确认输入签名 |
 | Streaming ASR | 已实现 | 每 session ASR 工厂，app 默认直接对接 DashScope Qwen-ASR；当前同步适配器在音频阶段不生成假 partial | 后续如需更低延迟可替换真实流式 ASR |
 | EOU | 已实现 | 语义 end-of-utterance 扩展点，默认 LiveKit MultilingualModel 风格 ONNX detector，复用 `kong-voice-agent.onnx` 执行设备配置，支持模型缺失 fallback 和业务 Bean 覆盖 | 补入真实 turn detector 模型并按真实 ASR 语言更新阈值 |
 | TurnManager / endpointing | 已实现 | 根据 VAD、ASR、EOU 和时间信息推进状态并 commit turn | 扩展真实噪声场景测试 |
-| Audio ingress 编排 | 已实现 | WebSocket 音频异步进入 VAD + ASR + TurnManager | 增加背压、队列和延迟指标 |
-| LLM 编排 | 已实现 | turn committed + final transcript 后才调用可覆盖 LLM Bean，app 默认 mock | 接入真实 LLM，支持配置切换 |
+| Audio ingress 编排 | 已实现 | WebSocket 音频异步进入 VAD + ASR + TurnManager，`audio_end` 也异步提交 ASR final | 增加背压、队列和延迟指标 |
+| LLM 编排 | 已实现 | turn committed + final transcript 后才调用可覆盖 LLM Bean，app 提供默认 LLM 集成示例 | 接入真实 LLM，支持配置切换 |
 | TTS 编排 | 已实现 | LLM 非空文本片段直接进入可覆盖 TTS Bean，app 默认直接对接 DashScope Qwen-TTS，返回 base64 chunk | 接入音频格式协商 |
 | Playback / interruption | 已实现 | 播报中用户开口或 interrupt 会停止旧 turn | 增加完整集成测试 |
 | Hook 扩展 | 已实现 | `VoicePipelineHook` 支持观察音频、文本、commit、LLM、TTS、打断节点 | 按业务需要增加可改写上下文的 hook |
@@ -37,7 +37,7 @@
 - 根工程 `kong-voice-agent-parent` 通过 `dependencyManagement` 统一管理 Spring Boot、ONNX Runtime 和内部模块版本，并聚合 `kong-voice-agent-core` 和 `kong-voice-agent-app` 两个子模块。
 - `kong-voice-agent-app` 引入 AgentScope BOM 时会先重新导入项目统一的 Spring Boot BOM，避免业务 BOM 将 `spring-boot-autoconfigure` 等平台组件提升到不兼容版本。
 - `kong-voice-agent-core` 模块承载通用语音流水线、协议模型、可替换接口和 hook。
-- `kong-voice-agent-app` 模块承载 Spring Boot 启动入口、运行配置、虚拟线程执行器、默认 mock 能力和业务装配。
+- `kong-voice-agent-app` 模块承载 Spring Boot 启动入口、运行配置、虚拟线程执行器、默认集成能力和业务装配。
 - 依赖包含 WebSocket、Jackson、ONNX Runtime Java、Lombok、Spring Boot Test；ONNX Runtime artifact 可通过 `-Donnxruntime.artifactId=onnxruntime_gpu` 切换为 GPU 原生包。
 - 应用入口为 `kong-voice-agent-app` 模块的 `VoiceAgentApplication`。
 - 配置文件为 `kong-voice-agent-app/src/main/resources/application.yml`。
@@ -185,7 +185,7 @@
 验收点：
 
 - 当前 DashScope 同步适配器不是实时流式接口，音频进入后不生成假 `asr_partial`。
-- turn commit 或 `audio_end` 后能返回 `asr_final`。
+- turn commit 或 `audio_end` 后能返回 `asr_final`；ASR 提交失败会返回 `error(code=asr_failed)`。
 - 真实 ASR 可通过 adapter 替换，不需要改 WebSocket 层。
 
 ### 8. TurnManager 与 Endpointing
@@ -247,11 +247,12 @@
 ### 10. LLM 编排
 
 - `LlmOrchestrator` 定义统一接口。
-- 业务模块可以声明自己的 `LlmOrchestrator` Bean 覆盖 app 默认 mock。
-- `kong-voice-agent-app` 模块的 `MockLlmOrchestrator` 基于 final transcript 生成 mock 回复块。
+- 业务模块可以声明自己的 `LlmOrchestrator` Bean 覆盖 app 默认实现。
+- `kong-voice-agent-app` 模块的 `OllamaLlmOrchestrator` 负责把应用侧 Agent 事件流转换成 core 可识别的 `LlmChunk`。
 - `VoicePipelineService` 只在 turn committed 且 final transcript 就绪后启动 LLM。
 - 每个 LLM chunk 下发前校验 `turnId`。
 - `LlmChunk` 除标准文本片段外保留 `rawResponse`，供 hook、审计和问题排查读取底层 LLM 原始响应。
+- `agent_text_chunk.payload.rawResponse` 会把当前文本片段对应的底层 LLM 原始响应继续透传给前端，方便联调和问题排查。
 - 下发事件：`agent_thinking`、`agent_text_chunk`。
 
 验收点：
@@ -264,10 +265,11 @@
 ### 11. TTS 编排
 
 - `TtsOrchestrator` 定义 TTS 接口，并提供默认流式回调方法，旧的同步实现无需改造也能继续工作。
-- 业务模块可以声明自己的 `TtsOrchestrator` Bean 覆盖 app 默认 mock。
+- 业务模块可以声明自己的 `TtsOrchestrator` Bean 覆盖 app 默认实现。
 - LLM 非空文本片段会提交给 TTS；默认 DashScope 适配器会按 turnId 累计到句子边界或最后一个 chunk，再启动合成。
 - `kong-voice-agent-app` 模块的 `DashScopeTtsOrchestrator` 默认开启 `kong-voice-agent.tts.dashscope.streaming-enabled`，通过 DashScope SSE 流式 multimodal generation 接口逐块读取音频并实时下发；关闭流式后仍按句累计并一次性返回该句音频。API Key 缺失、服务不可用或返回空音频时直接失败。
 - TTS 异常会在流水线边界转换为 `error(code=tts_failed)` 下行事件，并清理当前 turn 的播报状态，避免异常泄漏到 Reactor 订阅回调。
+- `LlmOrchestrator.stream` 和 `TtsOrchestrator.synthesizeStreaming` 的回调需要在方法返回前完成，或通过同步异常暴露失败，便于核心流水线统一收口状态和错误。
 - 每个 `TtsChunk` 带 `turnId`、`seq`、`isLast`、`audio`、`text`。
 - 下发事件：`tts_audio_chunk`，音频以 base64 放在 payload 中。
 
@@ -286,19 +288,20 @@
 - `InterruptionManager` 负责打断流程。
 - 当 Agent 正在 speaking 且检测到新用户说话时：
   - 旧 `turnId` 失效。
+  - 调用 ASR/TTS 的 `cancelTurn` 释放旧 turn 缓存。
   - `agentSpeaking` 置为 false。
   - 下发 `playback_stop`。
   - 下发 `turn_interrupted`。
   - 分配新 `turnId`。
   - 状态切到 `USER_PRE_SPEECH`。
-- 客户端也可发送 `interrupt` 主动打断。
+- 客户端也可发送 `interrupt` 主动打断；空闲状态下的 `interrupt` 是 no-op，不创建新 turn。
 
 验收点：
 
 - Agent 播报时用户重新说话可以立即打断。
 - 旧 turn 的 TTS chunk 不再发送。
 - 新 turn 正常开始。
-- interruption 旧 turn 拦截已有单元测试覆盖。
+- interruption 旧 turn 拦截、空闲 interrupt no-op 和 turn 取消资源释放已有单元测试覆盖。
 
 ### 13. Hook 扩展
 
@@ -418,6 +421,9 @@
 - `TurnManagerTest`
 - `VoicePipelinePolicyTest`
 - `VoicePipelineTextInputTest`
+- `VoicePipelineAudioEndTest`
+- `InterruptionManagerTest`
+- `TurnCancellationCoordinatorTest`
 - `WsMessageTest`
 
 待补测试：
@@ -455,7 +461,7 @@
 - [x] README 完整。
 - [x] 架构和端到端数据流图已整理到 `docs/architecture.md`。
 - [x] `ui/` React 对话界面可以通过 `pnpm lint` 和 `pnpm build` 验证。
-- [x] mock 模式可独立运行。
+- [x] 应用层示例可独立运行。
 - [x] 目录结构清晰。
 - [x] 后续替换真实 ASR / LLM / TTS 的改动面尽量小。
 

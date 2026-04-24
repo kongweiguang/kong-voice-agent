@@ -91,6 +91,16 @@ public class DashScopeTtsOrchestrator implements TtsOrchestrator {
     }
 
     /**
+     * 释放指定 turn 尚未达到句子边界的待合成文本。
+     */
+    @Override
+    public void cancelTurn(String turnId) {
+        if (turnId != null) {
+            pendingTextByTurn.remove(turnId);
+        }
+    }
+
+    /**
      * 调用 DashScope Qwen-TTS 接口，失败时直接抛出异常，交由流水线转换为 error 事件。
      */
     private byte[] speechAudio(String text) {

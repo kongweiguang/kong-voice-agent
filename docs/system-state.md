@@ -10,9 +10,9 @@
 
 构建一个 Java 21 + Spring Boot 3 的 voice agent 后端，支持 WebSocket 音频输入、文本输入、流式 ASR、TurnManager、EOU endpointing、LLM、TTS 和 interruption。
 
-当前版本的路线是先完成 mock 闭环，再替换成真实服务。所有设计都要围绕 `turnId` 隔离，避免旧 turn 污染新 turn。
+当前版本的路线是先保证本地可运行闭环，再按需替换或扩展真实服务。所有设计都要围绕 `turnId` 隔离，避免旧 turn 污染新 turn。
 
-工程当前采用 Maven 3.9+ 多模块结构：`kong-voice-agent-core` 是公共可复用语音能力模块，`kong-voice-agent-app` 是包含 Spring Boot 启动类、默认 mock 能力和业务装配的应用模块。业务侧通过注册同类型 Bean 覆盖默认 ASR、VAD、EOU、LLM、TTS，通过 `VoicePipelineHook` 挂接自定义业务逻辑。项目面向 GitHub 开源维护，构建和代码风格优先服务长期可维护性、健壮性和扩展性。
+工程当前采用 Maven 3.9+ 多模块结构：`kong-voice-agent-core` 是面向多个系统复用的框架层，负责公共协议、运行态和扩展点；`kong-voice-agent-app` 是应用层示例，包含 Spring Boot 启动类、默认集成和业务装配。业务侧通过注册同类型 Bean 覆盖默认 ASR、VAD、EOU、LLM、TTS，通过 `VoicePipelineHook` 挂接自定义业务逻辑。项目面向 GitHub 开源维护，构建和代码风格优先服务长期可维护性、健壮性和扩展性。
 
 仓库根目录新增 `ui/` React 前端工程，使用 pnpm 管理依赖，技术栈为 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4 和 Lucide React。当前界面采用豆包风格的产品化 AI 对话布局，左侧轻量会话栏承载新对话、历史摘要、连接状态和账号入口，右侧聊天区包含欢迎态、示例问题和底部固定输入框，支持日间/夜间主题、固定账号登录、WebSocket 连接、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、TTS 自动播放和助手文字区播报动效。前端约定一个对话对应一条 WebSocket 连接和一个后端 session，多个会话连接可同时存在；点击“新对话”会为新会话建立新连接，切换会话不会关闭其他在线连接；会话列表、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`。
 
@@ -43,7 +43,7 @@
 - 已移除旧 HTML 静态联调页，当前统一使用 `ui/` React 界面做前端联调
 - 拆分 Maven 多模块：根工程聚合 `kong-voice-agent-core` 与 `kong-voice-agent-app`
 - `kong-voice-agent-core` 模块承载通用语音流水线、协议模型、可替换接口和 hook
-- `kong-voice-agent-app` 模块承载 Spring Boot 启动入口、运行配置、虚拟线程执行器、WebSocket 端点注册和默认 mock 能力
+- `kong-voice-agent-app` 模块承载 Spring Boot 启动入口、运行配置、虚拟线程执行器、WebSocket 端点注册和默认集成能力
 - 将音频处理和 Agent 下游任务执行器切换为 JDK 21 虚拟线程，并将虚拟线程路径上的 `synchronized` 锁替换为 `ReentrantLock`
 - 同一 session 的音频处理在进入 VAD / ASR / TurnManager 前通过 `ReentrantLock` 串行化，避免虚拟线程并发打乱音频顺序
 - 新增 `StreamingAsrAdapterFactory`，支持每个 session 创建独立 ASR 实例
@@ -76,6 +76,10 @@
 - 新增根目录 `ui/` 前端工程，采用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm
 - `ui/` 已实现豆包风格产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、首屏欢迎态、底部固定输入、麦克风 PCM 输入、停止录音自动 `audio_end`、发送/打断一体主按钮、日间/夜间主题切换、固定账号登录、WebSocket 连接、Agent 文本 chunk 聚合、TTS 播放队列、播报动效、多前端会话 WebSocket 并存和 `localStorage` 会话快照
 - `ui/` 已通过 `pnpm lint` 和 `pnpm build` 验证，并生成 `pnpm-lock.yaml`
+- `audio_end` 已改为通过音频处理执行器异步提交 ASR final，并在提交前显式下发 `USER_TURN_COMMITTED`；ASR 提交失败会转换为 `error(code=asr_failed)`
+- 新增 `AgentResponseOrchestrator` 承接 turn commit 后的 LLM/TTS 编排、错误转换和播报状态收口，`VoicePipelineService` 保持音频、ASR 和 turn 状态机门面职责
+- 新增 `TurnCancellationCoordinator` 以及 ASR/TTS `cancelTurn` 扩展点，打断或切换 turn 时释放旧 turn 的 PCM、待合成文本等缓存；空闲 `interrupt` 现在是 no-op，不创建新 turn
+- `SessionState` 的 invalid turn 记录改为有上限的最近失效记录，避免长连接多轮对话无限增长
 
 ## 关键约束
 
@@ -89,12 +93,15 @@
 - 当前 TTS 下行协议不携带音频格式元数据；默认 DashScope Qwen-TTS 返回音频字节，由 React UI 优先用浏览器解码播放，后续如需动态格式需要扩展 payload
 - 使用 WebSocket 持续上传音频
 - 允许通过 WebSocket JSON 文本消息直接提交用户文本
-- 允许 ASR / LLM / TTS 先走 mock
+- 允许 ASR / LLM / TTS 先走应用层示例实现或业务自定义实现
 - turn commit 之前不能调用 LLM
 - turn commit 之前不能启动 TTS
 - 本版本不支持 preemptive
 - 所有异步回调都必须校验 `turnId`
 - interruption 需要能立即打断旧 turn 的播报
+- `audio_end` 可能触发远端 ASR 调用，必须离开 WebSocket 文本消息线程并复用同一 session 的音频处理锁
+- LLM/TTS 流式适配器必须在接口方法返回前完成回调或同步抛错；异步 SDK 需要在适配器内部等待完成
+- 被打断或被新 turn 取代的旧 turn 必须调用 ASR/TTS `cancelTurn` 释放 turn 级缓存
 - 新增或修改代码时需要同步维护有用注释，尤其是异步、状态机和协议边界
 - 方法、属性、常量、枚举值、record 组件、配置 Bean 和公开扩展点都需要中文注释；简单 getter/setter 可由字段注释和类级说明覆盖
 - 测试要尽量完整、覆盖全面，新增或修改功能时优先补齐协议解析、异常输入、状态机边界、异步 `turnId` 隔离、打断流程、配置默认值和公开扩展点测试
@@ -124,7 +131,7 @@
 ## 已达成结论
 
 1. 这不是一个 preemptive 版本，`partial transcript` 不触发 LLM。
-2. 最小可运行闭环应该优先用 mock 跑通，避免一开始就被外部服务依赖卡住。
+2. 最小可运行闭环应该优先用应用层示例实现或简化实现跑通，避免一开始就被外部服务依赖卡住。
 3. 业务状态必须显式区分 session 和 turn，不能把共享状态散落在 handler 里。
 4. 协议需要把 `turnId` 作为一等字段，便于隔离和丢弃过期结果。
 5. 模型不再放入 `src/main/resources` 随 jar 打包，统一作为外置文件由 `models/` 目录和 compose volume 提供。
@@ -137,7 +144,7 @@
 12. EOU 是可替换能力，不与默认 LiveKit MultilingualModel 风格实现绑定；业务可以替换整个 `EouDetector`，默认 LiveKit 实现只额外需要可选的 `EouHistoryProvider`。
 13. EOU 只影响音频 turn commit 时机，不改变 WebSocket 消息结构，不引入 preemptive LLM。
 14. 默认 VAD 和默认 EOU 的 ONNX 执行设备通过统一配置控制，避免每个模型实现各自定义 GPU 开关。
-15. 当前认证只解决本地联调和单实例 mock 闭环的最小登录态，不等同于完整生产账号体系；后续真实部署需要补充持久化、过期、撤销和跨实例共享策略。
+15. 当前认证只解决本地联调和单实例示例部署的最小登录态，不等同于完整生产账号体系；后续真实部署需要补充持久化、过期、撤销和跨实例共享策略。
 
 ## 待决问题
 
@@ -146,7 +153,7 @@
 - 真实 TTS 默认已接 DashScope Qwen-TTS，后续可按音频格式和延迟需求优化
 - Silero VAD 模型文件需要补入 `models/silero_vad.onnx`
 - LiveKit turn detector 模型和 tokenizer 需要按需补入 `models/livekit-turn-detector/`
-- 是否需要在 Bean 覆盖之外，为 mock / real 服务增加显式配置开关
+- 是否需要在 Bean 覆盖之外，为示例 / 生产服务增加显式配置开关
 - WebSocket 下行协议当前采用统一 `payload` 外壳，前端是否需要平铺字段
 - 固定账号认证后续是否替换为真实用户体系，以及 token 过期、撤销和多实例共享策略如何设计
 

@@ -209,6 +209,7 @@ React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频
 │   ├── features.md                 # 功能文档入口
 │   ├── frontend-integration.md     # 前端接入和联调说明
 │   ├── in-progress.md              # 当前正在开发中的功能
+│   ├── plan/                       # 正在开发功能的步骤计划目录
 │   ├── protocol.md                 # WebSocket 协议、事件和示例
 │   ├── roadmap.md                  # 后续计划
 │   ├── topic/                      # 通用主题文档目录
@@ -546,7 +547,8 @@ mvn -pl kong-voice-agent-app dependency:tree -Dincludes=org.springframework.boot
 - [docs/protocol.md](docs/protocol.md)：WebSocket 控制面、WebRTC signaling 与 JSON 示例
 - [docs/frontend-integration.md](docs/frontend-integration.md)：前端接入、`WS PCM / WebRTC` 联调说明
 - [docs/system-state.md](docs/system-state.md)：已完成并稳定可用的功能
-- [docs/in-progress.md](docs/in-progress.md)：当前正在开发中的功能
+- [docs/in-progress.md](docs/in-progress.md)：当前正在开发中的功能列表和计划入口
+- [docs/plan/README.md](docs/plan/README.md)：正在开发功能的步骤计划目录说明
 - [docs/roadmap.md](docs/roadmap.md)：后续计划
 
 建议新手阅读顺序：
@@ -555,4 +557,4 @@ mvn -pl kong-voice-agent-app dependency:tree -Dincludes=org.springframework.boot
 2. 再启动 `ui/` 的 React 对话界面验证登录、连接和文本对话
 3. 然后阅读 `docs/architecture.md` 理解整体数据流
 4. 再阅读 `docs/protocol.md` 理解消息字段
-5. 最后阅读 `docs/system-state.md`、`docs/in-progress.md` 和 `docs/roadmap.md` 理解系统边界与后续方向
+5. 最后阅读 `docs/system-state.md`、`docs/in-progress.md`、`docs/plan/README.md` 和 `docs/roadmap.md` 理解系统边界、当前推进方式与后续方向

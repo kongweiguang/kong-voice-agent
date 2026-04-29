@@ -33,6 +33,12 @@ import {
   LoginResponse,
   sendWsJson,
 } from "@/api/agentClient";
+import {
+  closeRtcSession,
+  createRtcSession,
+  submitRtcCandidate,
+  submitRtcOffer,
+} from "@/api/rtcClient";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,6 +94,8 @@ interface ConversationRecord extends ConversationSummary {
   currentTurnId?: string | null;
   /** 该会话的本地消息快照。 */
   messages: ChatMessage[];
+  /** 当前会话使用的媒体传输模式。 */
+  transportKind: TransportKind;
   /** 会话创建时间戳。 */
   createdAtMs: number;
   /** 会话最近更新时间戳。 */
@@ -97,6 +105,9 @@ interface ConversationRecord extends ConversationSummary {
 /** WebSocket 连接状态。 */
 type ConnectionState = "disconnected" | "connecting" | "connected";
 
+/** 媒体传输模式。 */
+type TransportKind = "ws-pcm" | "webrtc";
+
 /** TTS 播放队列项，按同一 turn 内的 seq 顺序播放。 */
 interface TtsPlaybackItem {
   /** 音频所属 turn id。 */
@@ -105,6 +116,18 @@ interface TtsPlaybackItem {
   seq: number;
   /** 后端返回的 base64 音频字节。 */
   audioBase64: string;
+}
+
+/** 当前前端会话对应的 RTC 运行态。 */
+interface RtcConversationRuntime {
+  /** 后端 RTC sessionId。 */
+  sessionId: string;
+  /** 浏览器 PeerConnection。 */
+  peerConnection: RTCPeerConnection;
+  /** 本地麦克风流。 */
+  localStream: MediaStream;
+  /** 当前远端播放节点。 */
+  remoteAudio: HTMLAudioElement;
 }
 
 /** 登录表单初始值。 */
@@ -154,9 +177,14 @@ export function ChatShell() {
   const [audioInputStatus, setAudioInputStatus] = useState("麦克风未开启");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(initialActiveConversation.messages);
+  const [transportKind, setTransportKind] = useState<TransportKind>(initialActiveConversation.transportKind);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [connectionErrors, setConnectionErrors] = useState<Record<string, string | null>>({});
+  const conversationsRef = useRef(conversations);
   const socketsRef = useRef(new Map<string, WebSocket>());
+  const rtcConnectionsRef = useRef(new Map<string, RtcConversationRuntime>());
+  const rtcReconnectTimersRef = useRef(new Map<string, number>());
+  const rtcReconnectAttemptsRef = useRef(new Map<string, number>());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const currentAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -257,6 +285,10 @@ export function ChatShell() {
   }, [activeConversationId]);
 
   useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  useEffect(() => {
     persistConversations(conversations);
   }, [conversations]);
 
@@ -274,6 +306,7 @@ export function ChatShell() {
                 sessionId,
                 currentTurnId,
                 messages: sanitizeMessagesForStorage(messages),
+                transportKind,
                 preview: buildConversationPreview(messages, conversation.preview),
                 updatedAtMs: Date.now(),
               }
@@ -282,7 +315,7 @@ export function ChatShell() {
       );
     }, 0);
     return () => window.clearTimeout(syncTimer);
-  }, [activeConversationId, currentTurnId, messages, sessionId]);
+  }, [activeConversationId, currentTurnId, messages, sessionId, transportKind]);
 
   useEffect(() => {
     recordingRef.current = recording;
@@ -291,6 +324,7 @@ export function ChatShell() {
   useEffect(() => {
     return () => {
       stopMicrophone(false);
+      closeAllRtcConnections();
       closeAllSockets();
       playbackQueueRef.current = [];
       if (currentAudioSourceRef.current) {
@@ -361,6 +395,23 @@ export function ChatShell() {
     setConversationConnectionState(sessionId, "disconnected");
   }
 
+  /** 关闭指定会话的 RTC 连接，并通知后端释放 PeerConnection。 */
+  function closeConversationRtc(sessionId: string, options?: { resetReconnectAttempts?: boolean }) {
+    clearRtcReconnect(sessionId, options?.resetReconnectAttempts ?? true);
+    const runtime = rtcConnectionsRef.current.get(sessionId);
+    if (!runtime) {
+      return;
+    }
+    rtcConnectionsRef.current.delete(sessionId);
+    runtime.peerConnection.close();
+    runtime.localStream.getTracks().forEach((track) => track.stop());
+    runtime.remoteAudio.srcObject = null;
+    const socket = socketsRef.current.get(sessionId);
+    if (socket?.readyState === WebSocket.OPEN) {
+      closeRtcSession(socket, runtime.sessionId);
+    }
+  }
+
   /** 关闭当前页面持有的所有 WebSocket 连接。 */
   function closeAllSockets() {
     socketsRef.current.forEach((socket) => socket.close());
@@ -368,8 +419,17 @@ export function ChatShell() {
     setConnectionStates({});
   }
 
+  /** 关闭当前页面持有的所有 RTC 连接。 */
+  function closeAllRtcConnections() {
+    Array.from(rtcConnectionsRef.current.keys()).forEach((conversationId) => closeConversationRtc(conversationId));
+    rtcReconnectTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    rtcReconnectTimersRef.current.clear();
+    rtcReconnectAttemptsRef.current.clear();
+  }
+
   /** 注销当前用户并关闭已建立的所有 WebSocket 连接。 */
   function handleLogout() {
+    closeAllRtcConnections();
     closeAllSockets();
     setLogin(null);
     setSessionId(null);
@@ -387,75 +447,301 @@ export function ChatShell() {
     currentTurnIdRef.current = null;
     invalidTurnIdsRef.current.clear();
     setTurnActive(false);
-    stopMicrophone(false);
+    if (transportKind === "ws-pcm") {
+      stopMicrophone(false);
+    } else {
+      setRecording(false);
+      recordingRef.current = false;
+      setAudioInputStatus("WebRTC 麦克风未连接");
+    }
     stopPlayback("等待 TTS");
   }
 
-  /** 使用指定 token 为某个前端会话打开 Agent WebSocket，服务端会创建独立 session。 */
-  function openAgentSocket(token: string, sessionId = activeConversationIdRef.current) {
-    closeConversationSocket(sessionId);
-    if (sessionId === activeConversationIdRef.current) {
+  /** 返回指定前端会话最近一次绑定的后端 sessionId，重连时优先复用。 */
+  function resolveConversationSessionId(conversationId: string) {
+    if (conversationId === activeConversationIdRef.current && sessionId) {
+      return sessionId;
+    }
+    return conversationsRef.current.find((conversation) => conversation.id === conversationId)?.sessionId ?? null;
+  }
+
+  /** 清理指定会话的 RTC 重连定时器；成功恢复后会顺带重置重试次数。 */
+  function clearRtcReconnect(conversationId: string, resetAttempts: boolean) {
+    const timerId = rtcReconnectTimersRef.current.get(conversationId);
+    if (timerId) {
+      window.clearTimeout(timerId);
+      rtcReconnectTimersRef.current.delete(conversationId);
+    }
+    if (resetAttempts) {
+      rtcReconnectAttemptsRef.current.delete(conversationId);
+    }
+  }
+
+  /** 当前会话的 RTC 媒体面断开后，按退避策略自动尝试恢复。 */
+  function scheduleRtcReconnect(conversationId: string, reason: string) {
+    const nextTransportKind =
+      conversationId === activeConversationIdRef.current
+        ? transportKind
+        : (conversationsRef.current.find((conversation) => conversation.id === conversationId)?.transportKind ?? "ws-pcm");
+    if (nextTransportKind !== "webrtc" || !login?.token || rtcReconnectTimersRef.current.has(conversationId)) {
+      return;
+    }
+    const attempt = rtcReconnectAttemptsRef.current.get(conversationId) ?? 0;
+    if (attempt >= 3) {
+      setConversationConnectionError(conversationId, `${reason}，已达到自动重连上限，请手动重新连接。`);
+      if (conversationId === activeConversationIdRef.current) {
+        setAudioInputStatus("WebRTC 自动重连已停止");
+      }
+      return;
+    }
+    const delayMs = Math.min(1_500 * 2 ** attempt, 10_000);
+    setConversationConnectionError(conversationId, `${reason}，${Math.round(delayMs / 1000)} 秒后自动重连。`);
+    if (conversationId === activeConversationIdRef.current) {
+      setAudioInputStatus("WebRTC 媒体断开，正在准备重连");
+      setPlaybackStatus("等待 RTC 重连");
+    }
+    const timerId = window.setTimeout(() => {
+      rtcReconnectTimersRef.current.delete(conversationId);
+      rtcReconnectAttemptsRef.current.set(conversationId, attempt + 1);
+      connectRtcConversation(conversationId).catch(() => {
+        // connectRtcConversation 已负责写入本轮失败信息，下一次重试继续由状态回调触发。
+      });
+    }, delayMs);
+    rtcReconnectTimersRef.current.set(conversationId, timerId);
+  }
+
+  /** 使用指定 token 为某个前端会话打开 Agent WebSocket。 */
+  function openAgentSocket(token: string, conversationId = activeConversationIdRef.current) {
+    const preferredSessionId = resolveConversationSessionId(conversationId);
+    closeConversationSocket(conversationId);
+    if (conversationId === activeConversationIdRef.current) {
       resetConversationRuntime();
     }
-    setConversationConnectionState(sessionId, "connecting");
-    setConversationConnectionError(sessionId, null);
+    setConversationConnectionState(conversationId, "connecting");
+    setConversationConnectionError(conversationId, null);
 
-    const socket = new WebSocket(buildAgentWsUrl(token));
-    socketsRef.current.set(sessionId, socket);
+    const socket = new WebSocket(buildAgentWsUrl(token, preferredSessionId));
+    socketsRef.current.set(conversationId, socket);
 
     socket.addEventListener("open", () => {
-      if (socketsRef.current.get(sessionId) !== socket) {
+      if (socketsRef.current.get(conversationId) !== socket) {
         return;
       }
-      setConversationConnectionState(sessionId, "connected");
+      setConversationConnectionState(conversationId, "connected");
       sendWsJson(socket, "ping", { ts: Date.now() });
-      if (sessionId === activeConversationIdRef.current) {
+      if (conversationId === activeConversationIdRef.current) {
         setPlaybackStatus("等待 TTS");
       }
-      appendConversationMessage(sessionId, systemMessage("WebSocket 已连接。"));
+      appendConversationMessage(conversationId, systemMessage("WebSocket 已连接。"));
     });
 
     socket.addEventListener("message", (event) => {
-      if (socketsRef.current.get(sessionId) !== socket) {
+      if (socketsRef.current.get(conversationId) !== socket) {
         return;
       }
       if (typeof event.data !== "string") {
         return;
       }
       try {
-        handleAgentEvent(sessionId, JSON.parse(event.data) as AgentEventEnvelope);
+        handleAgentEvent(conversationId, JSON.parse(event.data) as AgentEventEnvelope);
       } catch {
-        appendConversationMessage(sessionId, systemMessage("收到无法解析的服务端消息。"));
+        appendConversationMessage(conversationId, systemMessage("收到无法解析的服务端消息。"));
       }
     });
 
     socket.addEventListener("close", () => {
-      if (socketsRef.current.get(sessionId) !== socket) {
+      if (socketsRef.current.get(conversationId) !== socket) {
         return;
       }
-      socketsRef.current.delete(sessionId);
-      setConversationConnectionState(sessionId, "disconnected");
-      if (sessionId === activeConversationIdRef.current) {
+      socketsRef.current.delete(conversationId);
+      closeConversationRtc(conversationId, { resetReconnectAttempts: false });
+      setConversationConnectionState(conversationId, "disconnected");
+      if (conversationId === activeConversationIdRef.current) {
         setSessionId(null);
         setCurrentTurnId(null);
         setTurnActive(false);
-        stopMicrophone(false);
+        if (transportKind === "ws-pcm") {
+          stopMicrophone(false);
+        } else {
+          setRecording(false);
+          recordingRef.current = false;
+          setAudioInputStatus("WebRTC 麦克风未连接");
+        }
         stopPlayback("连接已断开。");
       }
     });
 
     socket.addEventListener("error", () => {
-      if (socketsRef.current.get(sessionId) !== socket) {
+      if (socketsRef.current.get(conversationId) !== socket) {
         return;
       }
-      setConversationConnectionError(sessionId, "WebSocket 连接失败，请确认后端已启动且 token 有效。");
-      setConversationConnectionState(sessionId, "disconnected");
+      setConversationConnectionError(conversationId, "WebSocket 连接失败，请确认后端已启动且 token 有效。");
+      setConversationConnectionState(conversationId, "disconnected");
+    });
+    return socket;
+  }
+
+  /** 等待 WebSocket 真正完成握手，便于后续继续发送 RTC signaling。 */
+  function waitForSocketOpen(socket: WebSocket) {
+    if (socket.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("等待 WebSocket 建连超时。"));
+      }, 10_000);
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onFailed = () => {
+        cleanup();
+        reject(new Error("WebSocket 建连失败。"));
+      };
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        socket.removeEventListener("open", onOpen);
+        socket.removeEventListener("close", onFailed);
+        socket.removeEventListener("error", onFailed);
+      };
+      socket.addEventListener("open", onOpen);
+      socket.addEventListener("close", onFailed);
+      socket.addEventListener("error", onFailed);
     });
   }
 
   /** 为当前会话建立后端 Agent WebSocket 连接。 */
+  async function connectRtcConversation(conversationId: string) {
+    if (!login?.token || connectionStates[conversationId] === "connecting") {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setConversationConnectionError(conversationId, "当前浏览器不支持 WebRTC 麦克风采集。");
+      return;
+    }
+    closeConversationRtc(conversationId, { resetReconnectAttempts: false });
+
+    try {
+      const socket = openAgentSocket(login.token, conversationId);
+      await waitForSocketOpen(socket);
+      const rtcSession = await createRtcSession(socket);
+      updateConversationSessionTitle(conversationId, rtcSession.sessionId);
+      updateConversationTurnId(conversationId, "");
+
+      const localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const peerConnection = new RTCPeerConnection({ iceServers: rtcSession.iceServers });
+      const remoteAudio = new Audio();
+      remoteAudio.autoplay = true;
+
+      peerConnection.ontrack = (event) => {
+        const [stream] = event.streams;
+        remoteAudio.srcObject = stream ?? new MediaStream([event.track]);
+        remoteAudio.play().catch(() => {
+          // 浏览器可能要求用户手势恢复播放，保留当前流并等待后续用户操作即可。
+        });
+        if (conversationId === activeConversationIdRef.current) {
+          setPlaybackStatus("WebRTC 远端音轨已连接");
+        }
+      };
+      peerConnection.onicecandidate = (event) => {
+        if (!event.candidate) {
+          return;
+        }
+        submitRtcCandidate(socket, rtcSession.sessionId, {
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+          candidate: event.candidate.candidate,
+        });
+      };
+      peerConnection.oniceconnectionstatechange = () => {
+        const state = peerConnection.iceConnectionState;
+        if (state === "connected" || state === "completed") {
+          clearRtcReconnect(conversationId, true);
+          setConversationConnectionError(conversationId, null);
+          if (conversationId === activeConversationIdRef.current) {
+            setAudioInputStatus("WebRTC 麦克风已连接");
+          }
+          return;
+        }
+        if (state === "disconnected") {
+          scheduleRtcReconnect(conversationId, "RTC 媒体暂时断开");
+          return;
+        }
+        if (state === "failed") {
+          scheduleRtcReconnect(conversationId, "RTC ICE 建链失败");
+        }
+      };
+      peerConnection.onconnectionstatechange = () => {
+        const state = peerConnection.connectionState;
+        if (state === "connected") {
+          clearRtcReconnect(conversationId, true);
+          setConversationConnectionError(conversationId, null);
+          return;
+        }
+        if (state === "disconnected") {
+          scheduleRtcReconnect(conversationId, "PeerConnection 已断开");
+          return;
+        }
+        if (state === "failed") {
+          scheduleRtcReconnect(conversationId, "PeerConnection 已失败");
+        }
+      };
+      localStream.getAudioTracks().forEach((track) => peerConnection.addTrack(track, localStream));
+      rtcConnectionsRef.current.set(conversationId, {
+        sessionId: rtcSession.sessionId,
+        peerConnection,
+        localStream,
+        remoteAudio,
+      });
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      const answer = await submitRtcOffer(socket, rtcSession.sessionId, {
+        type: offer.type.toUpperCase(),
+        sdp: offer.sdp ?? "",
+      });
+      await peerConnection.setRemoteDescription({
+        type: answer.type.toLowerCase() as RTCSdpType,
+        sdp: answer.sdp,
+      });
+
+      if (conversationId === activeConversationIdRef.current) {
+        setSessionId(rtcSession.sessionId);
+        setRecording(true);
+        recordingRef.current = true;
+        setAudioInputStatus("WebRTC 麦克风已连接");
+        setPlaybackStatus("等待 RTC 远端音轨");
+      }
+      clearRtcReconnect(conversationId, true);
+      setConversationConnectionError(conversationId, null);
+    } catch (error) {
+      closeConversationRtc(conversationId, { resetReconnectAttempts: false });
+      closeConversationSocket(conversationId);
+      setConversationConnectionError(
+        conversationId,
+        error instanceof Error ? error.message : "WebRTC 连接失败，请确认后端已启用 RTC。",
+      );
+      scheduleRtcReconnect(conversationId, "WebRTC 连接失败");
+    }
+  }
+
+  /** 为当前会话建立后端 Agent 连接。 */
   function connectSocket() {
     if (!login?.token || connectionState === "connecting") {
+      return;
+    }
+    if (transportKind === "webrtc") {
+      connectRtcConversation(activeConversationId).catch(() => {
+        // connectRtcConversation 已负责写入错误信息。
+      });
       return;
     }
 
@@ -464,6 +750,7 @@ export function ChatShell() {
 
   /** 主动断开当前会话的 WebSocket 连接。 */
   function disconnectSocket() {
+    closeConversationRtc(activeConversationId);
     closeConversationSocket(activeConversationId);
     setSessionId(null);
     setCurrentTurnId(null);
@@ -476,7 +763,7 @@ export function ChatShell() {
   /** 新建会话时只为新会话打开连接，已有会话的 WebSocket 保持在线。 */
   function startNewConversation() {
     const token = login?.token;
-    const conversation = createConversationRecord();
+    const conversation = createConversationRecord(transportKind);
     setMessages([]);
     setActiveConversationId(conversation.id);
     activeConversationIdRef.current = conversation.id;
@@ -488,7 +775,13 @@ export function ChatShell() {
     setMobileSidebarOpen(false);
 
     if (token) {
-      openAgentSocket(token, conversation.id);
+      if (conversation.transportKind === "webrtc") {
+        connectRtcConversation(conversation.id).catch(() => {
+          // connectRtcConversation 已负责写入错误信息。
+        });
+      } else {
+        openAgentSocket(token, conversation.id);
+      }
     }
   }
 
@@ -506,6 +799,7 @@ export function ChatShell() {
     setInput("");
     setSessionId(conversation.sessionId ?? null);
     setCurrentTurnId(conversation.currentTurnId ?? null);
+    setTransportKind(conversation.transportKind);
     currentTurnIdRef.current = conversation.currentTurnId ?? null;
     setTurnActive(conversation.messages.some((message) => message.streaming));
     stopMicrophone(false);
@@ -540,6 +834,86 @@ export function ChatShell() {
     );
   }
 
+  /** 查询指定会话当前使用的传输模式。 */
+  function resolveConversationTransportKind(sessionId: string) {
+    return conversations.find((conversation) => conversation.id === sessionId)?.transportKind ?? "ws-pcm";
+  }
+
+  /** 把服务端下发的 RTC ICE candidate 添加到对应会话的 PeerConnection。 */
+  function addRemoteRtcIceCandidate(sessionId: string, event: AgentEventEnvelope) {
+    const runtime = rtcConnectionsRef.current.get(sessionId);
+    const candidate = readPayloadText(event, "candidate");
+    if (!runtime || !candidate) {
+      return;
+    }
+    runtime.peerConnection
+      .addIceCandidate({
+        candidate,
+        sdpMid: readPayloadText(event, "sdpMid") || null,
+        sdpMLineIndex: readPayloadNumber(event, "sdpMLineIndex", 0),
+      })
+      .catch(() => {
+        setConversationConnectionError(sessionId, "添加远端 RTC candidate 失败。");
+      });
+  }
+
+  /** 根据后端 rtc_state_changed 事件同步当前会话的 RTC 调试状态。 */
+  function handleRtcStateChanged(sessionId: string, event: AgentEventEnvelope) {
+    const state = readPayloadText(event, "state");
+    const source = readPayloadText(event, "source");
+    const detail = readPayloadText(event, "detail");
+    if (!state) {
+      return;
+    }
+
+    if (state === "connected") {
+      setConversationConnectionError(sessionId, null);
+    } else if (state === "disconnected" || state === "failed") {
+      setConversationConnectionError(sessionId, formatRtcStateMessage(state, source, detail));
+    } else if (state === "closed" && detail === "rtc_close") {
+      setConversationConnectionError(sessionId, null);
+    }
+
+    if (sessionId !== activeConversationIdRef.current) {
+      return;
+    }
+
+    switch (state) {
+      case "session_opened":
+        setAudioInputStatus("WebRTC 会话已初始化，等待 SDP 协商");
+        setPlaybackStatus("等待 RTC 远端音轨");
+        break;
+      case "track_bound":
+        setPlaybackStatus("服务端已绑定远端 RTC 音轨");
+        break;
+      case "media_flowing":
+        setAudioInputStatus("WebRTC 音频已进入后端");
+        break;
+      case "connected":
+        setAudioInputStatus("WebRTC 麦克风已连接");
+        if (source === "peer_connection") {
+          setPlaybackStatus("RTC 媒体链路已连通");
+        }
+        break;
+      case "disconnected":
+        setAudioInputStatus("WebRTC 媒体已断开，等待自动恢复");
+        setPlaybackStatus("等待 RTC 重连");
+        break;
+      case "failed":
+        setAudioInputStatus("WebRTC 媒体建链失败");
+        setPlaybackStatus("等待 RTC 重连");
+        break;
+      case "closed":
+        setAudioInputStatus("WebRTC 麦克风未连接");
+        if (detail === "rtc_close") {
+          setPlaybackStatus("RTC 会话已关闭");
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
   /** 处理后端下行事件并映射为聊天消息。 */
   function handleAgentEvent(sessionId: string, event: AgentEventEnvelope) {
     const active = sessionId === activeConversationIdRef.current;
@@ -572,11 +946,21 @@ export function ChatShell() {
       case "tts_audio_chunk":
         if (active) {
           setTurnActive(true);
-          enqueueTtsAudio(event);
+          if (resolveConversationTransportKind(sessionId) === "ws-pcm") {
+            enqueueTtsAudio(event);
+          } else {
+            setPlaybackStatus("RTC 远端音轨播放中");
+          }
         }
         if (event.payload?.["isLast"] === true) {
           updateConversationMessages(sessionId, (current) => markStreamingDone(current));
         }
+        break;
+      case "rtc_ice_candidate":
+        addRemoteRtcIceCandidate(sessionId, event);
+        break;
+      case "rtc_state_changed":
+        handleRtcStateChanged(sessionId, event);
         break;
       case "turn_interrupted":
       case "playback_stop":
@@ -845,6 +1229,24 @@ export function ChatShell() {
 
   /** 切换麦克风采集状态。 */
   async function toggleMicrophone() {
+    if (transportKind === "webrtc") {
+      const runtime = rtcConnectionsRef.current.get(activeConversationIdRef.current);
+      const socket = activeSocket();
+      if (!runtime) {
+        return;
+      }
+      const nextEnabled = !recordingRef.current;
+      runtime.localStream.getAudioTracks().forEach((track) => {
+        track.enabled = nextEnabled;
+      });
+      recordingRef.current = nextEnabled;
+      setRecording(nextEnabled);
+      setAudioInputStatus(nextEnabled ? "WebRTC 麦克风已开启" : "WebRTC 麦克风已静音");
+      if (!nextEnabled && socket?.readyState === WebSocket.OPEN) {
+        sendWsJson(socket, "audio_end", {});
+      }
+      return;
+    }
     if (recording) {
       stopMicrophone(true);
       return;
@@ -937,6 +1339,21 @@ export function ChatShell() {
     );
   }
 
+  /** 更新指定会话的传输模式，确保本地会话快照与当前 UI 选择一致。 */
+  function updateConversationTransportKind(sessionId: string, nextTransportKind: TransportKind) {
+    setConversations((current) =>
+      current.map((item) =>
+        item.id === sessionId
+          ? {
+              ...item,
+              transportKind: nextTransportKind,
+              updatedAtMs: Date.now(),
+            }
+          : item,
+      ),
+    );
+  }
+
   /** 根据后端下行 sessionId 更新指定会话标题，帮助确认新对话已经对应新连接。 */
   function updateConversationSessionTitle(sessionId: string, nextSessionId: string) {
     setConversations((current) =>
@@ -966,6 +1383,46 @@ export function ChatShell() {
           : item,
       ),
     );
+  }
+
+  /** 切换当前会话的传输模式，并在会话已在线时按新模式立即重连。 */
+  function switchTransportKind(nextTransportKind: TransportKind) {
+    if (nextTransportKind === transportKind) {
+      return;
+    }
+
+    const conversationId = activeConversationIdRef.current;
+    const shouldReconnect = Boolean(
+      login?.token && (socketsRef.current.has(conversationId) || rtcConnectionsRef.current.has(conversationId)),
+    );
+
+    stopMicrophone(false);
+    closeConversationRtc(conversationId);
+    closeConversationSocket(conversationId);
+    updateConversationTransportKind(conversationId, nextTransportKind);
+    setTransportKind(nextTransportKind);
+    setSessionId(null);
+    setCurrentTurnId(null);
+    currentTurnIdRef.current = null;
+    invalidTurnIdsRef.current.clear();
+    setTurnActive(false);
+    setPlaybackStatus(nextTransportKind === "webrtc" ? "等待 RTC 远端音轨" : "等待 TTS");
+    setAudioInputStatus(nextTransportKind === "webrtc" ? "WebRTC 麦克风未连接" : "麦克风未开启");
+    setMessages((current) => [
+      ...markStreamingDone(current),
+      systemMessage(`已切换到 ${nextTransportKind === "webrtc" ? "WebRTC" : "WS PCM"} 模式。`),
+    ]);
+
+    if (!shouldReconnect || !login?.token) {
+      return;
+    }
+    if (nextTransportKind === "webrtc") {
+      connectRtcConversation(conversationId).catch(() => {
+        // connectRtcConversation 已负责写入错误信息。
+      });
+      return;
+    }
+    openAgentSocket(login.token, conversationId);
   }
 
   return (
@@ -1033,6 +1490,26 @@ export function ChatShell() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            <div className="hidden items-center gap-1 rounded-full border bg-background/80 p-1 md:flex">
+              <Button
+                type="button"
+                variant={transportKind === "ws-pcm" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 rounded-full px-3 text-xs"
+                onClick={() => switchTransportKind("ws-pcm")}
+              >
+                WS PCM
+              </Button>
+              <Button
+                type="button"
+                variant={transportKind === "webrtc" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 rounded-full px-3 text-xs"
+                onClick={() => switchTransportKind("webrtc")}
+              >
+                WebRTC
+              </Button>
+            </div>
             <ConnectionBadge state={connectionState} label={connectionLabel} />
             <Button type="button" variant="ghost" size="icon" title="切换主题" onClick={toggleTheme}>
               {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
@@ -1067,7 +1544,11 @@ export function ChatShell() {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 {connected ? <CheckCircle2 className="size-3.5 text-primary" /> : <WifiOff className="size-3.5" />}
-                {connected ? "WebSocket text · TTS 自动播放" : "当前连接不可用"}
+                {connected
+                  ? transportKind === "webrtc"
+                    ? "WebSocket 控制面 · WebRTC 音频面"
+                    : "WebSocket text · TTS 自动播放"
+                  : "当前连接不可用"}
               </span>
             </div>
             <div className="flex items-end gap-2 rounded-[1.35rem] border bg-input-shell p-2 shadow-[0_18px_45px_hsl(var(--foreground)/0.10)]">
@@ -1552,8 +2033,8 @@ function systemMessage(content: string): ChatMessage {
   };
 }
 
-/** 创建一条新的前端会话记录，真正的后端 session 会在 WebSocket 连接成功后回填。 */
-function createConversationRecord(): ConversationRecord {
+/** 创建一条新的前端会话记录，真正的后端 session 会在连接成功后回填。 */
+function createConversationRecord(transportKind: TransportKind = "ws-pcm"): ConversationRecord {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
@@ -1564,6 +2045,7 @@ function createConversationRecord(): ConversationRecord {
     sessionId: null,
     currentTurnId: null,
     messages: [],
+    transportKind,
     createdAtMs: now,
     updatedAtMs: now,
   };
@@ -1614,6 +2096,7 @@ function normalizeConversationRecord(item: Partial<ConversationRecord> | null | 
     sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
     currentTurnId: typeof item.currentTurnId === "string" ? item.currentTurnId : null,
     messages,
+    transportKind: item.transportKind === "webrtc" ? "webrtc" : "ws-pcm",
     createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : now,
     updatedAtMs: typeof item.updatedAtMs === "number" ? item.updatedAtMs : now,
   };
@@ -1706,6 +2189,28 @@ function readPayloadText(event: AgentEventEnvelope, field: string) {
 function readPayloadNumber(event: AgentEventEnvelope, field: string, defaultValue: number) {
   const value = event.payload?.[field];
   return typeof value === "number" ? value : defaultValue;
+}
+
+/** 将 rtc_state_changed 转换为适合侧栏展示的简短调试文案。 */
+function formatRtcStateMessage(state: string, source: string, detail: string) {
+  const sourceLabel =
+    source === "peer_connection"
+      ? "PeerConnection"
+      : source === "ice"
+        ? "ICE"
+        : source === "media"
+          ? "媒体面"
+          : "RTC 会话";
+  if (state === "failed") {
+    return `${sourceLabel} 失败${detail ? `：${detail}` : ""}`;
+  }
+  if (state === "disconnected") {
+    return `${sourceLabel} 已断开${detail ? `：${detail}` : ""}`;
+  }
+  if (state === "closed") {
+    return `${sourceLabel} 已关闭${detail ? `：${detail}` : ""}`;
+  }
+  return `${sourceLabel} 状态：${state}${detail ? `（${detail}）` : ""}`;
 }
 
 /** 将 base64 字符串转换为字节数组。 */

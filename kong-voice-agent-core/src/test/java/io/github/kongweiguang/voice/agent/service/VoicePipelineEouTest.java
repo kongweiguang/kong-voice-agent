@@ -3,6 +3,7 @@ package io.github.kongweiguang.voice.agent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapter;
+import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.eou.EouPrediction;
 import io.github.kongweiguang.voice.agent.hook.VoicePipelineHook;
@@ -10,6 +11,8 @@ import io.github.kongweiguang.voice.agent.llm.LlmChunk;
 import io.github.kongweiguang.voice.agent.llm.LlmRequest;
 import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
+import io.github.kongweiguang.voice.agent.playback.SessionAudioPlaybackPolicy;
+import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
 import io.github.kongweiguang.voice.agent.util.JsonUtils;
@@ -93,6 +96,8 @@ class VoicePipelineEouTest {
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.<VoicePipelineHook>of()
@@ -100,7 +105,7 @@ class VoicePipelineEouTest {
     }
 
     private SessionState session() {
-        return new SessionState("s1", io.github.kongweiguang.voice.agent.audio.AudioFormatSpec.DEFAULT, (sessionId, format) -> new PartialAsrAdapter(), eouConfig());
+        return new SessionState("s1", AudioFormatSpec.DEFAULT, (sessionId, format) -> new PartialAsrAdapter(), eouConfig());
     }
 
     private void replyOnce(LlmRequest request, Consumer<LlmChunk> consumer, AtomicInteger calls) {
@@ -114,6 +119,12 @@ class VoicePipelineEouTest {
 
     private Executor directExecutor() {
         return Runnable::run;
+    }
+
+    private SessionManager sessionManager() {
+        return new SessionManager((sessionId, format) -> new PartialAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig());
     }
 
     private byte[] pcm() {

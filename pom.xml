@@ -13,6 +13,7 @@
 
     <modules>
         <module>kong-voice-agent-core</module>
+        <module>kong-voice-extension</module>
         <module>kong-voice-agent-app</module>
     </modules>
 
@@ -46,6 +47,36 @@
             <dependency>
                 <groupId>io.github.kongweiguang</groupId>
                 <artifactId>kong-voice-agent-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-asr-openai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-llm-openai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-eou-livekit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-vad-silero</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-tts-openai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-transport-webrtc</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

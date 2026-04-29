@@ -22,7 +22,7 @@ kong-voice-agent:
       username: ${KONG_VOICE_AGENT_AUTH_FIXED_USER_USERNAME:demo}
       password: ${KONG_VOICE_AGENT_AUTH_FIXED_USER_PASSWORD:demo123456}
   onnx:
-    gpu-enabled: ${KONG_VOICE_AGENT_ONNX_GPU_ENABLED:true}
+    gpu-enabled: ${KONG_VOICE_AGENT_ONNX_GPU_ENABLED:false}
     gpu-device-id: ${KONG_VOICE_AGENT_ONNX_GPU_DEVICE_ID:0}
     fallback-to-cpu: ${KONG_VOICE_AGENT_ONNX_FALLBACK_TO_CPU:false}
   audio:
@@ -46,22 +46,26 @@ kong-voice-agent:
     inference-timeout-ms: 300
     language: zh
   asr:
-    dashscope:
-      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
-      base-url: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
-      chat-completions-path: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_CHAT_COMPLETIONS_PATH:/chat/completions}
-      model: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_MODEL:qwen3-asr-flash}
-      language: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_LANGUAGE:zh}
-      enable-itn: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_ENABLE_ITN:true}
-      timeout-ms: ${KONG_VOICE_AGENT_ASR_DASHSCOPE_TIMEOUT_MS:15000}
+    openai:
+      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:sk-your-api-key-here}}
+      base-url: ${KONG_VOICE_AGENT_ASR_OPENAI_BASE_URL:https://api.openai.com/v1}
+      transcriptions-path: ${KONG_VOICE_AGENT_ASR_OPENAI_TRANSCRIPTIONS_PATH:/audio/transcriptions}
+      model: ${KONG_VOICE_AGENT_ASR_OPENAI_MODEL:gpt-4o-mini-transcribe}
+      language: ${KONG_VOICE_AGENT_ASR_OPENAI_LANGUAGE:zh}
+      timeout-ms: ${KONG_VOICE_AGENT_ASR_OPENAI_TIMEOUT_MS:15000}
   tts:
-    dashscope:
-      api-key: ${KONG_VOICE_AGENT_DASHSCOPE_API_KEY:${DASHSCOPE_API_KEY:xxx}}
-      base-url: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com}
-      generation-path: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_GENERATION_PATH:/api/v1/services/aigc/multimodal-generation/generation}
-      model: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_MODEL:qwen3-tts-flash}
-      voice: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_VOICE:Cherry}
-      language-type: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_LANGUAGE_TYPE:Chinese}
-      streaming-enabled: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_STREAMING_ENABLED:true}
-      timeout-ms: ${KONG_VOICE_AGENT_TTS_DASHSCOPE_TIMEOUT_MS:30000}
+    openai:
+      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:sk-your-api-key-here}}
+      base-url: ${KONG_VOICE_AGENT_TTS_OPENAI_BASE_URL:https://api.openai.com/v1}
+      speech-path: ${KONG_VOICE_AGENT_TTS_OPENAI_SPEECH_PATH:/audio/speech}
+      model: ${KONG_VOICE_AGENT_TTS_OPENAI_MODEL:gpt-4o-mini-tts}
+      voice: ${KONG_VOICE_AGENT_TTS_OPENAI_VOICE:alloy}
+      response-format: ${KONG_VOICE_AGENT_TTS_OPENAI_RESPONSE_FORMAT:wav}
+      instructions: ${KONG_VOICE_AGENT_TTS_OPENAI_INSTRUCTIONS:}
+      timeout-ms: ${KONG_VOICE_AGENT_TTS_OPENAI_TIMEOUT_MS:30000}
+  rtc:
+    enabled: ${KONG_VOICE_AGENT_RTC_ENABLED:false}
+    ice-servers:
+      - ${KONG_VOICE_AGENT_RTC_ICE_SERVER_1:stun:stun.l.google.com:19302}
+    signaling-timeout-ms: ${KONG_VOICE_AGENT_RTC_SIGNALING_TIMEOUT_MS:15000}
 

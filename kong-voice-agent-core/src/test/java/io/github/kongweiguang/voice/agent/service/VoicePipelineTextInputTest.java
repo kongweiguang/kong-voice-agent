@@ -1,6 +1,8 @@
 package io.github.kongweiguang.voice.agent.service;
 
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
+import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
+import io.github.kongweiguang.voice.agent.support.NoopStreamingAsrAdapter;
 import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.eou.NoopEouDetector;
 import io.github.kongweiguang.voice.agent.support.TestSessionStates;
@@ -9,6 +11,8 @@ import io.github.kongweiguang.voice.agent.llm.LlmChunk;
 import io.github.kongweiguang.voice.agent.llm.LlmRequest;
 import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
+import io.github.kongweiguang.voice.agent.playback.SessionAudioPlaybackPolicy;
+import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
@@ -61,6 +65,8 @@ class VoicePipelineTextInputTest {
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.of(hook)
@@ -95,6 +101,8 @@ class VoicePipelineTextInputTest {
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -125,6 +133,8 @@ class VoicePipelineTextInputTest {
                 },
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -160,6 +170,8 @@ class VoicePipelineTextInputTest {
                 },
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -197,6 +209,8 @@ class VoicePipelineTextInputTest {
                 },
                 dispatcher,
                 new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
                 directExecutor(),
                 directExecutor(),
                 List.of()
@@ -219,6 +233,12 @@ class VoicePipelineTextInputTest {
 
     private Executor directExecutor() {
         return Runnable::run;
+    }
+
+    private SessionManager sessionManager() {
+        return new SessionManager((sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig());
     }
 
     private EouConfig eouConfig() {

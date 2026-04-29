@@ -21,19 +21,19 @@ import java.util.concurrent.ConcurrentMap;
 @RequiredArgsConstructor
 public class SessionManager {
     /**
-     * Spring WebSocket id 到语音会话状态的主索引，保持连接回调和断连清理路径简单稳定。
+     * 语音会话 id 到运行态的主索引，供 WebSocket 控制面和 WebRTC 媒体面共享同一份状态。
      */
     private final ConcurrentMap<String, SessionState> sessions = new ConcurrentHashMap<>();
 
     /**
-     * Spring WebSocket id 到连接对象的索引，支持异步业务流程按 sessionId 反查当前连接。
+     * Spring WebSocket id 到语音会话 id 的索引，用于从连接回调快速定位共享会话状态。
      */
-    private final ConcurrentMap<String, WebSocketSession> webSocketSessions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> webSocketSessionIds = new ConcurrentHashMap<>();
 
     /**
-     * 语音会话 id 到 Spring WebSocket id 的辅助索引，供 WebSocket 回调之外的业务模块按 sessionId 查询。
+     * 语音会话 id 到当前控制面 WebSocket 连接的索引。
      */
-    private final ConcurrentMap<String, String> sessionWebSocketIds = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, WebSocketSession> webSocketSessions = new ConcurrentHashMap<>();
 
     /**
      * 为每个新会话创建独立 ASR 实例的工厂。
@@ -54,65 +54,92 @@ public class SessionManager {
      * 为新 WebSocket 连接创建语音会话状态。
      */
     public SessionState create(WebSocketSession webSocketSession) {
-        SessionState existing = sessions.get(webSocketSession.getId());
-        if (existing != null) {
-            return existing;
-        }
         String sessionId = webSocketSession.getAttributes().getOrDefault("sessionId", IdUtils.sessionId()).toString();
-        SessionState state = new SessionState(sessionId, audioFormatSpec, asrAdapterFactory, eouConfig);
-        String previousWebSocketId = sessionWebSocketIds.put(sessionId, webSocketSession.getId());
-        if (previousWebSocketId != null && !previousWebSocketId.equals(webSocketSession.getId())) {
-            // 同一业务 sessionId 重新连接时，只保留最新 WebSocket，旧连接状态必须清理并失效 turn。
-            SessionState previous = sessions.remove(previousWebSocketId);
+        SessionState state = create(sessionId);
+        String previousWebSocketId = webSocketSessionIds.put(webSocketSession.getId(), sessionId);
+        if (previousWebSocketId != null && !previousWebSocketId.equals(sessionId)) {
             webSocketSessions.remove(previousWebSocketId);
-            if (previous != null) {
-                previous.clear();
-            }
         }
-        sessions.put(webSocketSession.getId(), state);
-        webSocketSessions.put(webSocketSession.getId(), webSocketSession);
+        WebSocketSession previousWebSocket = webSocketSessions.put(sessionId, webSocketSession);
+        state.bindControlWebSocketSession(webSocketSession);
+        state.transportKind(Boolean.TRUE.equals(state.rtcMediaActive()) ? SessionTransportKind.WEBRTC : SessionTransportKind.WS_PCM);
+        if (previousWebSocket != null && !previousWebSocket.getId().equals(webSocketSession.getId())) {
+            // 同一业务 sessionId 重新绑定控制连接时，只保留最新 WebSocket。
+            webSocketSessionIds.remove(previousWebSocket.getId());
+        }
         return state;
+    }
+
+    /**
+     * 为 WebRTC 等独立媒体通道创建或获取共享会话状态。
+     */
+    public SessionState create(String sessionId) {
+        String normalizedSessionId = sessionId == null || sessionId.isBlank() ? IdUtils.sessionId() : sessionId.trim();
+        return sessions.computeIfAbsent(normalizedSessionId,
+                ignored -> new SessionState(normalizedSessionId, audioFormatSpec, asrAdapterFactory, eouConfig));
     }
 
     /**
      * 查询 WebSocket 连接绑定的语音会话状态。
      */
     public Optional<SessionState> get(WebSocketSession webSocketSession) {
-        return Optional.ofNullable(sessions.get(webSocketSession.getId()));
+        String sessionId = webSocketSessionIds.get(webSocketSession.getId());
+        return sessionId == null ? Optional.empty() : Optional.ofNullable(sessions.get(sessionId));
     }
 
     /**
      * 通过语音会话 id 查询会话状态，供 WebSocket 回调之外的业务模块复用同一份运行态。
      */
     public Optional<SessionState> get(String sessionId) {
-        if (sessionId == null) {
-            return Optional.empty();
-        }
-        String webSocketId = sessionWebSocketIds.get(sessionId);
-        return webSocketId == null ? Optional.empty() : Optional.ofNullable(sessions.get(webSocketId));
+        return sessionId == null ? Optional.empty() : Optional.ofNullable(sessions.get(sessionId));
     }
 
     /**
      * 通过语音会话 id 查询当前仍打开的 WebSocket 连接。
      */
     public Optional<WebSocketSession> getWebSocketSession(String sessionId) {
+        return sessionId == null ? Optional.empty() : Optional.ofNullable(webSocketSessions.get(sessionId));
+    }
+
+    /**
+     * 标记指定会话已经挂载 RTC 媒体链路。
+     */
+    public SessionState attachRtc(String sessionId) {
+        SessionState state = create(sessionId);
+        state.rtcMediaActive(true);
+        state.transportKind(SessionTransportKind.WEBRTC);
+        return state;
+    }
+
+    /**
+     * 标记指定会话的 RTC 媒体链路已关闭；若控制面也已断开，则一并释放会话状态。
+     */
+    public void detachRtc(String sessionId) {
         if (sessionId == null) {
-            return Optional.empty();
+            return;
         }
-        String webSocketId = sessionWebSocketIds.get(sessionId);
-        return webSocketId == null ? Optional.empty() : Optional.ofNullable(webSocketSessions.get(webSocketId));
+        SessionState state = sessions.get(sessionId);
+        if (state == null) {
+            return;
+        }
+        state.rtcMediaActive(false);
+        state.transportKind(SessionTransportKind.WS_PCM);
+        clearIfOrphaned(sessionId, state);
     }
 
     /**
      * 移除并清理已断开 WebSocket 对应的状态。
      */
     public void destroy(WebSocketSession webSocketSession) {
-        webSocketSessions.remove(webSocketSession.getId());
-        SessionState state = sessions.remove(webSocketSession.getId());
+        String sessionId = webSocketSessionIds.remove(webSocketSession.getId());
+        if (sessionId == null) {
+            return;
+        }
+        webSocketSessions.remove(sessionId, webSocketSession);
+        SessionState state = sessions.get(sessionId);
         if (state != null) {
-            // 使用 remove(key, value) 避免旧连接断开时误删同 sessionId 的新连接索引。
-            sessionWebSocketIds.remove(state.sessionId(), webSocketSession.getId());
-            state.clear();
+            state.unbindControlWebSocketSession(webSocketSession);
+            clearIfOrphaned(sessionId, state);
         }
     }
 
@@ -121,5 +148,17 @@ public class SessionManager {
      */
     public int activeCount() {
         return sessions.size();
+    }
+
+    /**
+     * 当控制面和媒体面都已不存在时释放会话状态。
+     */
+    private void clearIfOrphaned(String sessionId, SessionState state) {
+        if (Boolean.TRUE.equals(state.rtcMediaActive()) || webSocketSessions.containsKey(sessionId)) {
+            return;
+        }
+        if (sessions.remove(sessionId, state)) {
+            state.clear();
+        }
     }
 }

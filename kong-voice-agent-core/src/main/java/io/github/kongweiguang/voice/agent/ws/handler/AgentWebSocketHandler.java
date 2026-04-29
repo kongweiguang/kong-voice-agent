@@ -8,6 +8,7 @@ import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
+import io.github.kongweiguang.voice.agent.session.SessionTransportKind;
 import io.github.kongweiguang.voice.agent.util.JsonUtils;
 import io.github.kongweiguang.voice.agent.ws.WsMessage;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
@@ -56,7 +57,7 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         SessionState state = sessionManager.create(session);
         log.info("WebSocket connected: ws={}, session={}", session.getId(), state.sessionId());
-        dispatcher.send(session, AgentEvent.of(EventType.state_changed, state.sessionId(), state.currentTurnId(), new StateChangedPayload("IDLE", "connected")));
+        dispatcher.send(state, AgentEvent.of(EventType.state_changed, state.sessionId(), state.currentTurnId(), new StateChangedPayload("IDLE", "connected")));
     }
 
     /**
@@ -71,7 +72,7 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
             textMessageHandlerRegistry.handle(new WsTextMessageContext(session, state, wsMessage));
         } catch (Exception ex) {
             // 协议错误只下发 error，不关闭连接，方便前端继续发送有效消息自恢复。
-            dispatcher.send(session,
+            dispatcher.send(state,
                     AgentEvent.of(
                             EventType.error,
                             state.sessionId(),
@@ -89,6 +90,10 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         SessionState state = sessionManager.get(session).orElseGet(() -> sessionManager.create(session));
+        if (state.transportKind() == SessionTransportKind.WEBRTC) {
+            // WebRTC 已接管音频面后，不再继续消费 WebSocket PCM，避免双通道音频同时推进同一 turn。
+            return;
+        }
         byte[] pcm = new byte[message.getPayloadLength()];
         // 复制到 byte[] 后再异步处理，避免底层 ByteBuffer 生命周期影响后续 VAD/ASR。
         message.getPayload().get(pcm);

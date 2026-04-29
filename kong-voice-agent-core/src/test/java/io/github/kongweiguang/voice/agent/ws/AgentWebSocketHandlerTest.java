@@ -15,6 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketExtension;
@@ -24,6 +25,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.security.Principal;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * 验证 WebSocket handler 只负责解析和委托策略注册表。
@@ -84,6 +88,30 @@ class AgentWebSocketHandlerTest {
         assertThat(event.at("/payload/message").asText()).isEqualTo("unsupported type: unknown");
     }
 
+    @Test
+    @DisplayName("WebRTC 已接管音频面后忽略 WebSocket PCM")
+    void ignoresBinaryPcmWhenRtcOwnsAudioIngress() throws Exception {
+        SessionManager sessionManager = new SessionManager(
+                (sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig()
+        );
+        VoicePipelineService pipelineService = mock(VoicePipelineService.class);
+        AgentWebSocketHandler handler = new AgentWebSocketHandler(
+                sessionManager,
+                pipelineService,
+                new PlaybackDispatcher(),
+                new WsTextMessageHandlerRegistry(List.of())
+        );
+        CapturingWebSocketSession ws = new CapturingWebSocketSession(Map.of("sessionId", "sess_webrtc"));
+        sessionManager.create(ws);
+        sessionManager.attachRtc("sess_webrtc");
+
+        handler.handleMessage(ws, new BinaryMessage(ByteBuffer.wrap(new byte[]{1, 2, 3, 4})));
+
+        verify(pipelineService, never()).acceptAudio(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(ws), org.mockito.ArgumentMatchers.any());
+    }
+
     /**
      * 记录 handler 收到的上下文，证明入口没有自行分支处理 type。
      */
@@ -112,6 +140,15 @@ class AgentWebSocketHandlerTest {
     private static final class CapturingWebSocketSession implements WebSocketSession {
         private final String id = UUID.randomUUID().toString();
         private final List<String> sent = new ArrayList<>();
+        private final Map<String, Object> attributes;
+
+        private CapturingWebSocketSession() {
+            this(Map.of());
+        }
+
+        private CapturingWebSocketSession(Map<String, Object> attributes) {
+            this.attributes = attributes;
+        }
 
         @Override
         public String getId() {
@@ -130,7 +167,7 @@ class AgentWebSocketHandlerTest {
 
         @Override
         public Map<String, Object> getAttributes() {
-            return Map.of();
+            return attributes;
         }
 
         @Override

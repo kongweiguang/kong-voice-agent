@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.kongweiguang</groupId>
+        <artifactId>kong-voice-agent-parent</artifactId>
+        <version>0.1</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>kong-voice-extension</artifactId>
+    <packaging>pom</packaging>
+    <name>kong-voice-extension</name>
+    <description>kong-voice-agent 扩展模块</description>
+
+    <modules>
+        <module>kong-voice-extension-asr-openai</module>
+        <module>kong-voice-extension-llm-openai</module>
+        <module>kong-voice-extension-eou-livekit</module>
+        <module>kong-voice-extension-vad-silero</module>
+        <module>kong-voice-extension-tts-openai</module>
+        <module>kong-voice-extension-transport-webrtc</module>
+    </modules>
+</project>

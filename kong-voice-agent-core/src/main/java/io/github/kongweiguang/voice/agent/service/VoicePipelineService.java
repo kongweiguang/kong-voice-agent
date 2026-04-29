@@ -14,6 +14,8 @@ import io.github.kongweiguang.voice.agent.model.EventType;
 import io.github.kongweiguang.voice.agent.model.payload.*;
 import io.github.kongweiguang.voice.agent.playback.InterruptionManager;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
+import io.github.kongweiguang.voice.agent.playback.SessionAudioPlaybackPolicy;
+import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.session.TurnLifecycleState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
@@ -79,6 +81,16 @@ public class VoicePipelineService {
     private final InterruptionManager interruptionManager;
 
     /**
+     * 决定当前会话的音频下行是否继续保留 WebSocket `tts_audio_chunk`。
+     */
+    private final SessionAudioPlaybackPolicy sessionAudioPlaybackPolicy;
+
+    /**
+     * 会话注册表，用于在控制面与媒体面分离时按 sessionId 反查当前 WebSocket 控制连接。
+     */
+    private final SessionManager sessionManager;
+
+    /**
      * 业务扩展 hook，按注册顺序观察关键流水线节点。
      */
     private final List<VoicePipelineHook> hooks;
@@ -104,6 +116,8 @@ public class VoicePipelineService {
                                 TtsOrchestrator ttsOrchestrator,
                                 PlaybackDispatcher dispatcher,
                                 InterruptionManager interruptionManager,
+                                SessionAudioPlaybackPolicy sessionAudioPlaybackPolicy,
+                                SessionManager sessionManager,
                                 @Qualifier("audioTaskExecutor") Executor audioTaskExecutor,
                                 @Qualifier("agentTaskExecutor") Executor agentTaskExecutor,
                                 List<VoicePipelineHook> hooks) {
@@ -114,6 +128,8 @@ public class VoicePipelineService {
         this.ttsOrchestrator = ttsOrchestrator;
         this.dispatcher = dispatcher;
         this.interruptionManager = interruptionManager;
+        this.sessionAudioPlaybackPolicy = sessionAudioPlaybackPolicy;
+        this.sessionManager = sessionManager;
         this.audioTaskExecutor = audioTaskExecutor;
         this.agentTaskExecutor = agentTaskExecutor;
         this.hooks = hooks;
@@ -123,27 +139,36 @@ public class VoicePipelineService {
      * 接收 WebSocket 线程送来的 PCM，并将耗时工作调度到 IO 线程之外。
      */
     public void acceptAudio(SessionState session, WebSocketSession ws, byte[] pcm) {
+        WebSocketSession controlSession = resolveControlSession(session, ws);
         session.lastAudioAt(Instant.now());
         // 原始音频先进入会话级缓冲，后续可用于调试、回放或接入更复杂的端点策略。
         session.pcmRingBuffer().write(pcm);
         session.preRollBuffer().write(pcm);
-        hooks.forEach(hook -> hook.onAudioReceived(session, ws, pcm));
+        hooks.forEach(hook -> hook.onAudioReceived(session, controlSession, pcm));
         // VAD、ASR 和状态机推进可能有模型或远端调用，必须离开 WebSocket IO 线程执行。
-        CompletableFuture.runAsync(() -> processAudio(session, ws, pcm), audioTaskExecutor);
+        CompletableFuture.runAsync(() -> processAudio(session, controlSession, pcm), audioTaskExecutor);
+    }
+
+    /**
+     * 接收来自 WebRTC 等独立媒体通道的 PCM；控制事件仍会按 sessionId 回到当前 WebSocket 控制面。
+     */
+    public void acceptAudio(SessionState session, byte[] pcm) {
+        acceptAudio(session, null, pcm);
     }
 
     /**
      * 客户端强制结束音频：提交 ASR 最终结果后再启动 LLM。
      */
     public void commitAudioEnd(SessionState session, WebSocketSession ws) {
+        WebSocketSession controlSession = resolveControlSession(session, ws);
         String turnId = session.currentTurnId();
         if (!session.isCurrentTurn(turnId)) {
             return;
         }
         // audio_end 是客户端显式提交边界，绕过静音等待，直接获取 ASR final。
         AsrUpdate fin = session.asrAdapter().commitTurn(turnId);
-        publishAsrFinal(session, ws, fin);
-        startLlmAfterCommit(session, ws, fin);
+        publishAsrFinal(session, controlSession, fin);
+        startLlmAfterCommit(session, controlSession, fin);
     }
 
     /**
@@ -151,28 +176,29 @@ public class VoicePipelineService {
      * 直接建立新的 committed turn，再沿用 LLM/TTS 下游流水线。
      */
     public void acceptText(SessionState session, WebSocketSession ws, String text) {
+        WebSocketSession controlSession = resolveControlSession(session, ws);
         String normalized = text == null ? "" : text.trim();
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException("payload.text must not be blank");
         }
-        hooks.forEach(hook -> hook.onTextReceived(session, ws, normalized));
+        hooks.forEach(hook -> hook.onTextReceived(session, controlSession, normalized));
         String turnId = Boolean.TRUE.equals(session.agentSpeaking())
-                ? interruptWithHooks(session, ws, "client_text")
+                ? interruptWithHooks(session, controlSession, "client_text")
                 : session.nextTurnId();
         // 文本输入已经是完整用户 turn，因此直接进入 committed 状态，不经过 VAD/ASR/EOU。
         session.lastSpeechAt(Instant.now());
         session.lifecycleState(TurnLifecycleState.USER_TURN_COMMITTED);
-        publishState(session, ws, TurnLifecycleState.USER_TURN_COMMITTED, "text");
+        publishState(session, controlSession, TurnLifecycleState.USER_TURN_COMMITTED, "text");
         AsrUpdate fin = AsrUpdate.finalUpdate(turnId, normalized);
-        publishAsrFinal(session, ws, fin, "text");
-        startLlmAfterCommit(session, ws, fin);
+        publishAsrFinal(session, controlSession, fin, "text");
+        startLlmAfterCommit(session, controlSession, fin);
     }
 
     /**
      * 客户端主动打断与插话打断复用同一条失效路径。
      */
     public void interrupt(SessionState session, WebSocketSession ws, String reason) {
-        interruptWithHooks(session, ws, reason);
+        interruptWithHooks(session, resolveControlSession(session, ws), reason);
     }
 
     /**
@@ -242,7 +268,7 @@ public class VoicePipelineService {
         session.activeLlmTurnId(fin.turnId());
         LlmRequest request = new LlmRequest(session.sessionId(), fin.turnId(), fin.transcript());
         hooks.forEach(hook -> hook.beforeLlm(session, ws, request));
-        dispatcher.send(ws, AgentEvent.of(EventType.agent_thinking, session.sessionId(), fin.turnId(), new AgentThinkingPayload(fin.transcript())));
+        dispatcher.send(session, AgentEvent.of(EventType.agent_thinking, session.sessionId(), fin.turnId(), new AgentThinkingPayload(fin.transcript())));
         CompletableFuture.runAsync(() -> {
             AtomicInteger ttsSeq = new AtomicInteger();
             AtomicBoolean failed = new AtomicBoolean(false);
@@ -282,7 +308,7 @@ public class VoicePipelineService {
             return;
         }
         hooks.forEach(hook -> hook.onLlmChunk(session, ws, chunk));
-        dispatcher.send(ws, AgentEvent.of(EventType.agent_text_chunk, session.sessionId(), chunk.turnId(),
+        dispatcher.send(session, AgentEvent.of(EventType.agent_text_chunk, session.sessionId(), chunk.turnId(),
                 new AgentTextChunkPayload(chunk.seq(), chunk.text(), chunk.last())));
         session.lifecycleState(TurnLifecycleState.AGENT_SPEAKING);
         session.agentSpeaking(true);
@@ -312,7 +338,7 @@ public class VoicePipelineService {
             return;
         }
         completeAgentTurn(session, turnId);
-        dispatcher.send(ws, AgentEvent.of(EventType.error, session.sessionId(), turnId,
+        dispatcher.send(session, AgentEvent.of(EventType.error, session.sessionId(), turnId,
                 new ErrorPayload(code, rootMessage(ex))));
     }
 
@@ -349,8 +375,11 @@ public class VoicePipelineService {
             return;
         }
         hooks.forEach(hook -> hook.onTtsChunk(session, ws, chunk));
-        dispatcher.send(ws, AgentEvent.of(EventType.tts_audio_chunk, session.sessionId(), chunk.turnId(),
-                new TtsAudioChunkPayload(chunk.seq(), chunk.last(), chunk.text(), Base64.getEncoder().encodeToString(chunk.audio()))));
+        session.audioEgressAdapter().onTtsChunk(session, chunk);
+        if (sessionAudioPlaybackPolicy.shouldSendTtsChunkOverWebSocket(session)) {
+            dispatcher.send(session, AgentEvent.of(EventType.tts_audio_chunk, session.sessionId(), chunk.turnId(),
+                    new TtsAudioChunkPayload(chunk.seq(), chunk.last(), chunk.text(), Base64.getEncoder().encodeToString(chunk.audio()))));
+        }
     }
 
     /**
@@ -361,7 +390,7 @@ public class VoicePipelineService {
             return;
         }
         session.partialTranscript(update.transcript());
-        dispatcher.send(ws, AgentEvent.of(EventType.asr_partial, session.sessionId(), update.turnId(), new TextPayload(update.transcript())));
+        dispatcher.send(session, AgentEvent.of(EventType.asr_partial, session.sessionId(), update.turnId(), new TextPayload(update.transcript())));
     }
 
     /**
@@ -380,7 +409,7 @@ public class VoicePipelineService {
         }
         session.finalTranscript(update.transcript());
         hooks.forEach(hook -> hook.onTurnCommitted(session, ws, update, source));
-        dispatcher.send(ws, AgentEvent.of(EventType.asr_final, session.sessionId(), update.turnId(), new AsrFinalPayload(update.transcript(), source)));
+        dispatcher.send(session, AgentEvent.of(EventType.asr_final, session.sessionId(), update.turnId(), new AsrFinalPayload(update.transcript(), source)));
     }
 
     /**
@@ -417,15 +446,30 @@ public class VoicePipelineService {
      * 使用会话的当前 turn 发布状态迁移事件。
      */
     private void publishState(SessionState session, WebSocketSession ws, TurnLifecycleState state, String reason) {
-        dispatcher.send(ws, AgentEvent.of(EventType.state_changed, session.sessionId(), session.currentTurnId(), new StateChangedPayload(state.name(), reason)));
+        dispatcher.send(session, AgentEvent.of(EventType.state_changed, session.sessionId(), session.currentTurnId(), new StateChangedPayload(state.name(), reason)));
     }
 
     /**
      * 所有打断入口统一经过这里，确保业务 hook 能观察到新 turnId。
      */
     private String interruptWithHooks(SessionState session, WebSocketSession ws, String reason) {
-        String newTurnId = interruptionManager.interrupt(session, ws, reason);
+        String newTurnId = interruptionManager.interrupt(session, reason);
         hooks.forEach(hook -> hook.onInterrupted(session, ws, newTurnId, reason));
         return newTurnId;
+    }
+
+    /**
+     * WebRTC 媒体面进入流水线时，按 sessionId 回查当前 WebSocket 控制连接。
+     */
+    private WebSocketSession resolveControlSession(SessionState session, WebSocketSession webSocketSession) {
+        if (webSocketSession != null) {
+            session.bindControlWebSocketSession(webSocketSession);
+            return webSocketSession;
+        }
+        WebSocketSession controlSession = sessionManager.getWebSocketSession(session.sessionId()).orElse(null);
+        if (controlSession != null) {
+            session.bindControlWebSocketSession(controlSession);
+        }
+        return controlSession;
     }
 }

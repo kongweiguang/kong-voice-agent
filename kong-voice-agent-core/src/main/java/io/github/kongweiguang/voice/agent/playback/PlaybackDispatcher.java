@@ -1,6 +1,7 @@
 package io.github.kongweiguang.voice.agent.playback;
 
 import io.github.kongweiguang.voice.agent.model.AgentEvent;
+import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.util.JsonUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
@@ -23,10 +24,23 @@ public class PlaybackDispatcher {
     private final ConcurrentMap<String, ReentrantLock> sendLocks = new ConcurrentHashMap<>();
 
     /**
+     * 按会话当前绑定的控制面协议发送事件；核心流水线只关心会话，不直接关心底层连接实现。
+     */
+    public void send(SessionState sessionState, AgentEvent event) {
+        if (sessionState == null) {
+            return;
+        }
+        send(sessionState.controlWebSocketSession(), event);
+    }
+
+    /**
      * 基于 WebSocket 会话加锁发送，因为 Spring 会话不保证支持
      * 多个异步回调并发发送消息。
      */
     public void send(WebSocketSession webSocketSession, AgentEvent event) {
+        if (webSocketSession == null) {
+            return;
+        }
         if (!webSocketSession.isOpen()) {
             return;
         }

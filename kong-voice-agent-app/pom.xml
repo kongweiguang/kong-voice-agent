@@ -51,6 +51,26 @@
             <artifactId>kong-voice-agent-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-voice-extension-asr-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-voice-extension-eou-livekit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-voice-extension-vad-silero</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-voice-extension-tts-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-voice-extension-transport-webrtc</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>

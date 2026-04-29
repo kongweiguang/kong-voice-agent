@@ -19,9 +19,28 @@
 
 ## 文档索引
 
-- `README.md`：面向新手的快速入门指南，用于帮助初次接触项目的人快速理解、启动和验证系统。
 - `docs/`：面向开发过程使用的文档集合，用于记录功能状态、协议约束、系统约定和长期开发上下文。
-- `docs/features.md`：记录项目功能清单、实现状态、验收点和后续关注事项。
-- `docs/frontend-integration.md`：面向 Web 前端联调，说明连接后端、发送文本或音频、处理下行事件和使用 demo 验证的方法。
+- `docs/system-state.md`：记录当前已经完成并稳定沉淀下来的功能能力。
+- `docs/features.md`：功能文档入口，用于指向已完成、正在做和未来计划对应的正式文档。
+- `docs/in-progress.md`：记录当前正在开发中的功能，完成后需要迁移到已完成文档。
+- `docs/roadmap.md`：记录已经明确但暂未进入当前开发周期的后续计划。
 - `docs/protocol.md`：定义 WebSocket 上下行消息协议、示例和交互约束。
-- `docs/system-state.md`：保存跨多轮开发的当前目标、硬约束、已完成内容、待决问题和下一步计划。
+- `docs/frontend-integration.md`：面向 Web 前端联调，说明连接后端、发送文本或音频、处理下行事件和使用 demo 验证的方法。
+
+## 文档拆分规则
+
+- `docs/features.md` 只维护“功能文档怎么拆、分别去哪里看”。
+- `docs/system-state.md` 只维护“当前已经完成并稳定可用的功能能力”。
+- `docs/in-progress.md` 只维护“当前正在开发中的功能，完成后需要迁移到已完成文档”。
+- `docs/roadmap.md` 只维护“未来计划，但暂未进入当前开发周期的事项”。
+- `docs/protocol.md` 只维护“协议字段、事件类型、交互约束、错误码和示例”。
+- `docs/frontend-integration.md` 只维护“前端如何登录、连接、联调、验证和处理事件”。
+
+## 文档维护规则
+
+- 一个信息只维护在一个稳定位置，避免多个文档重复记录同一结论。
+- 新增功能进入开发时，更新 `docs/in-progress.md`。
+- 功能稳定完成后，将记录迁移到 `docs/system-state.md`。
+- 明确为后续计划但暂不开发的事项，更新 `docs/roadmap.md`。
+- 修改协议字段、消息类型、错误码、时序约束时，更新 `docs/protocol.md`。
+- 修改前端接入方式、联调步骤、验证流程或界面行为时，更新 `docs/frontend-integration.md`。

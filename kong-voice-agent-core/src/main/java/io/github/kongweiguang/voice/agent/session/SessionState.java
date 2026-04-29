@@ -7,6 +7,7 @@ import io.github.kongweiguang.voice.agent.audio.CircularByteBuffer;
 import io.github.kongweiguang.voice.agent.audio.PreRollBuffer;
 import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.eou.EouPrediction;
+import io.github.kongweiguang.voice.agent.media.AudioEgressAdapter;
 import io.github.kongweiguang.voice.agent.turn.EndpointingPolicy;
 import io.github.kongweiguang.voice.agent.turn.TurnManager;
 import io.github.kongweiguang.voice.agent.util.IdUtils;
@@ -14,6 +15,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -47,6 +49,11 @@ public class SessionState {
      * 保存最近一段 PCM 音频，便于后续调试或扩展回放。
      */
     private final CircularByteBuffer pcmRingBuffer;
+
+    /**
+     * 当前会话绑定的标准音频格式，供不同媒体接入层做归一化转换。
+     */
+    private final AudioFormatSpec audioFormatSpec;
 
     /**
      * 保存用户开口前的预滚音频。
@@ -129,6 +136,28 @@ public class SessionState {
     private volatile Boolean interrupted = false;
 
     /**
+     * 当前会话是否仍保持 RTC 媒体连接，用于 WebSocket 断开后的清理决策。
+     */
+    private volatile Boolean rtcMediaActive = false;
+
+    /**
+     * 当前会话承载音频输入输出的传输模式，默认仍为 WebSocket PCM。
+     */
+    private volatile SessionTransportKind transportKind = SessionTransportKind.WS_PCM;
+
+    /**
+     * 当前会话绑定的控制面 WebSocket，用于统一协议事件发送。
+     */
+    @Setter(AccessLevel.NONE)
+    private volatile WebSocketSession controlWebSocketSession;
+
+    /**
+     * 当前会话挂载的音频下行适配器；未启用独立媒体通道时保持空实现。
+     */
+    @Setter(AccessLevel.NONE)
+    private volatile AudioEgressAdapter audioEgressAdapter = AudioEgressAdapter.noop();
+
+    /**
      * 最近一次参与 EOU 推理的 ASR 文本，用于避免同一文本重复推理。
      */
     private volatile String lastEouTranscript = "";
@@ -150,6 +179,7 @@ public class SessionState {
      */
     public SessionState(String sessionId, AudioFormatSpec format, StreamingAsrAdapterFactory asrAdapterFactory, EouConfig eouConfig) {
         this.sessionId = sessionId;
+        this.audioFormatSpec = format;
         this.pcmRingBuffer = new CircularByteBuffer(format.bytesForMs(30_000));
         this.preRollBuffer = new PreRollBuffer(format, 400);
         this.asrAdapter = asrAdapterFactory.create(sessionId, format);
@@ -212,6 +242,11 @@ public class SessionState {
         lifecycleState = TurnLifecycleState.IDLE;
         agentSpeaking = false;
         interrupted = false;
+        rtcMediaActive = false;
+        transportKind = SessionTransportKind.WS_PCM;
+        controlWebSocketSession = null;
+        audioEgressAdapter.close();
+        audioEgressAdapter = AudioEgressAdapter.noop();
         asrAdapter.close();
     }
 
@@ -234,6 +269,17 @@ public class SessionState {
      */
     public boolean hasCurrentTurn() {
         return currentTurnId.get() != null;
+    }
+
+    /**
+     * 挂载新的音频下行适配器；传入 null 时回退为空实现。
+     */
+    public void audioEgressAdapter(AudioEgressAdapter audioEgressAdapter) {
+        AudioEgressAdapter previous = this.audioEgressAdapter;
+        this.audioEgressAdapter = audioEgressAdapter == null ? AudioEgressAdapter.noop() : audioEgressAdapter;
+        if (previous != null && previous != this.audioEgressAdapter) {
+            previous.close();
+        }
     }
 
     /**
@@ -275,6 +321,22 @@ public class SessionState {
             task.run();
         } finally {
             audioProcessingLock.unlock();
+        }
+    }
+
+    /**
+     * 绑定当前会话的控制面 WebSocket 连接。
+     */
+    public void bindControlWebSocketSession(WebSocketSession controlWebSocketSession) {
+        this.controlWebSocketSession = controlWebSocketSession;
+    }
+
+    /**
+     * 仅在传入连接仍是当前控制面连接时解绑，避免误清理已重连的新连接。
+     */
+    public void unbindControlWebSocketSession(WebSocketSession controlWebSocketSession) {
+        if (this.controlWebSocketSession == controlWebSocketSession) {
+            this.controlWebSocketSession = null;
         }
     }
 }

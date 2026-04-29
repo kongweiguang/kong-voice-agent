@@ -37,6 +37,26 @@ public enum EventType {
     tts_audio_chunk,
 
     /**
+     * WebRTC trickle ICE candidate。
+     */
+    rtc_ice_candidate,
+
+    /**
+     * WebRTC signaling 会话已就绪，前端可继续创建 PeerConnection。
+     */
+    rtc_session_ready,
+
+    /**
+     * 服务端返回给浏览器的 WebRTC SDP answer。
+     */
+    rtc_answer,
+
+    /**
+     * WebRTC 运行态状态变化，便于前端观察建链、断流和恢复过程。
+     */
+    rtc_state_changed,
+
+    /**
      * 当前播报需要停止，通常由用户打断触发。
      */
     playback_stop,

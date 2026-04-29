@@ -91,6 +91,69 @@ class SessionManagerTest {
     }
 
     /**
+     * 保护同一业务 sessionId 重连时的新旧连接切换，避免旧连接稍后断开时误删新连接索引。
+     */
+    @Test
+    @DisplayName("同 sessionId 重连后旧连接断开不会误删新连接")
+    void keepsNewestConnectionWhenSameSessionReconnects() {
+        SessionManager manager = new SessionManager(
+                (sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig()
+        );
+        WebSocketSession oldWs = new StubWebSocketSession(Map.of("sessionId", "sess_reconnect"));
+        WebSocketSession newWs = new StubWebSocketSession(Map.of("sessionId", "sess_reconnect"));
+
+        SessionState oldState = manager.create(oldWs);
+        String oldTurnId = oldState.nextTurnId();
+        SessionState newState = manager.create(newWs);
+
+        assertThat(newState.sessionId()).isEqualTo("sess_reconnect");
+        assertThat(newState).isSameAs(oldState);
+        assertThat(oldState.isCurrentTurn(oldTurnId)).isTrue();
+        assertThat(manager.get("sess_reconnect")).containsSame(newState);
+        assertThat(manager.getWebSocketSession("sess_reconnect")).containsSame(newWs);
+        assertThat(manager.get(oldWs)).isEmpty();
+        assertThat(manager.activeCount()).isEqualTo(1);
+
+        manager.destroy(oldWs);
+
+        assertThat(manager.get("sess_reconnect")).containsSame(newState);
+        assertThat(manager.getWebSocketSession("sess_reconnect")).containsSame(newWs);
+        assertThat(manager.get(newWs)).containsSame(newState);
+        assertThat(manager.activeCount()).isEqualTo(1);
+    }
+
+    /**
+     * 保护 WebRTC 媒体面仍在线时，控制面断开不会提前清理共享 session。
+     */
+    @Test
+    @DisplayName("RTC 媒体仍活跃时控制面断开不清理 session")
+    void keepsSessionWhileRtcIsStillAttached() {
+        SessionManager manager = new SessionManager(
+                (sessionId, format) -> new NoopStreamingAsrAdapter(),
+                AudioFormatSpec.DEFAULT,
+                eouConfig()
+        );
+        WebSocketSession ws = new StubWebSocketSession(Map.of("sessionId", "sess_rtc"));
+
+        SessionState state = manager.create(ws);
+        manager.attachRtc("sess_rtc");
+
+        manager.destroy(ws);
+
+        assertThat(manager.get("sess_rtc")).containsSame(state);
+        assertThat(manager.getWebSocketSession("sess_rtc")).isEmpty();
+        assertThat(state.rtcMediaActive()).isTrue();
+        assertThat(manager.activeCount()).isEqualTo(1);
+
+        manager.detachRtc("sess_rtc");
+
+        assertThat(manager.get("sess_rtc")).isEmpty();
+        assertThat(manager.activeCount()).isZero();
+    }
+
+    /**
      * 保护会话创建时使用外部配置绑定后的音频格式，而不是重新落回硬编码默认值。
      */
     @Test

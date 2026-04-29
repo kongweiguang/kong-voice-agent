@@ -1,6 +1,6 @@
 /** 登录成功后后端返回的用户身份信息。 */
 export interface LoginUser {
-  /** 当前账号标识，默认演示账号为 demo-user。 */
+  /** 当前账号标识，默认演示账号为 123456。 */
   accountId: string;
   /** 当前登录用户名。 */
   username: string;
@@ -63,8 +63,12 @@ export async function loginAgent(request: LoginRequest): Promise<LoginResponse> 
 }
 
 /** 根据 token 构造受鉴权保护的 Agent WebSocket 地址。 */
-export function buildAgentWsUrl(token: string) {
-  return `${AGENT_WS_BASE}/ws/agent?token=${encodeURIComponent(token)}`;
+export function buildAgentWsUrl(token: string, sessionId?: string | null) {
+  const query = new URLSearchParams({ token });
+  if (sessionId) {
+    query.set("sessionId", sessionId);
+  }
+  return `${AGENT_WS_BASE}/ws/agent?${query.toString()}`;
 }
 
 /** 发送统一外壳的 WebSocket JSON 消息。 */

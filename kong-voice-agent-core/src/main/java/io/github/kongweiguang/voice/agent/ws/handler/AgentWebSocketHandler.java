@@ -9,7 +9,7 @@ import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.session.SessionTransportKind;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.ws.WsMessage;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
 import lombok.RequiredArgsConstructor;
@@ -67,7 +67,7 @@ public class AgentWebSocketHandler extends AbstractWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         SessionState state = sessionManager.get(session).orElseGet(() -> sessionManager.create(session));
         try {
-            WsMessage wsMessage = JsonUtils.read(message.getPayload(), WsMessage.class);
+            WsMessage wsMessage = Json.cvt(Json.node(message.getPayload()), WsMessage.class);
             // 文本帧只做协议解析和策略分发，具体业务边界由对应 WsTextMessageHandler 维护。
             textMessageHandlerRegistry.handle(new WsTextMessageContext(session, state, wsMessage));
         } catch (Exception ex) {

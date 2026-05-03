@@ -17,7 +17,7 @@ import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -313,7 +313,7 @@ class VoicePipelineTextInputTest {
         List<JsonNode> sentEvents() throws IOException {
             List<JsonNode> events = new ArrayList<>();
             for (String message : sent) {
-                events.add(JsonUtils.MAPPER.readTree(message));
+                events.add(Json.node(message));
             }
             return events;
         }

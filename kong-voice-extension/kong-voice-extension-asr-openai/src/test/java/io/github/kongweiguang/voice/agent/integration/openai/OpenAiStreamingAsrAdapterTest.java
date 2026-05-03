@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.integration.openai;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
@@ -88,6 +86,6 @@ class OpenAiStreamingAsrAdapterTest {
     private OpenAiStreamingAsrAdapter newAdapter(String baseUrl, String apiKey) {
         OpenAiAsrProperties properties = new OpenAiAsrProperties(
                 apiKey, baseUrl, "/audio/transcriptions", "gpt-4o-mini-transcribe", "zh", 1000);
-        return new OpenAiStreamingAsrAdapter(AudioFormatSpec.DEFAULT, properties, new ObjectMapper());
+        return new OpenAiStreamingAsrAdapter(AudioFormatSpec.DEFAULT, properties);
     }
 }

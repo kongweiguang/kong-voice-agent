@@ -1,18 +1,15 @@
 package io.github.kongweiguang.voice.agent.extension.asr.openai;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.kongweiguang.v1.http.client.Req;
+import io.github.kongweiguang.v1.http.client.Res;
+import io.github.kongweiguang.v1.http.client.entity.FilePart;
+import io.github.kongweiguang.v1.http.client.spec.HttpReqSpec;
 import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapter;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
+import io.github.kongweiguang.v1.json.Json;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.*;
@@ -35,11 +32,6 @@ public class OpenAiStreamingAsrAdapter implements StreamingAsrAdapter {
      * OpenAI ASR 服务配置。
      */
     private final OpenAiAsrProperties properties;
-
-    /**
-     * JSON 解析器，用于读取 OpenAI 转写响应。
-     */
-    private final ObjectMapper objectMapper;
 
     /**
      * 每个 turn 已收到的 PCM 原始字节，commit 时整体转成 WAV 文件上传。
@@ -80,15 +72,11 @@ public class OpenAiStreamingAsrAdapter implements StreamingAsrAdapter {
      */
     private String transcript(byte[] pcm) {
         requireApiKey();
-        try {
-            String response = restClient().post()
-                    .uri(properties.transcriptionsPath())
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                    .body(requestBody(pcm))
-                    .retrieve()
-                    .body(String.class);
-            return readTranscript(response);
+        try (Res response = requestSpec(pcm).ok()) {
+            if (!response.isOk()) {
+                throw new IllegalStateException("OpenAI ASR HTTP 状态码: " + response.code() + "，响应体: " + response.str());
+            }
+            return readTranscript(response.str());
         } catch (Exception ex) {
             throw new IllegalStateException("OpenAI ASR 调用失败，请检查 API Key、模型名称和网络连通性", ex);
         }
@@ -97,21 +85,18 @@ public class OpenAiStreamingAsrAdapter implements StreamingAsrAdapter {
     /**
      * 构造 OpenAI 转写请求体，使用 multipart/form-data 直接上传 WAV 文件。
      */
-    private MultiValueMap<String, Object> requestBody(byte[] pcm) {
-        byte[] wav = PcmWaveEncoder.encode(pcm, format);
-        MultiValueMap<String, Object> request = new LinkedMultiValueMap<>();
-        request.add("model", properties.model());
-        request.add("response_format", "json");
+    private HttpReqSpec requestSpec(byte[] pcm) {
+        HttpReqSpec spec = Req.multipart(properties.baseUrl() + properties.transcriptionsPath())
+                .timeout(Duration.ofMillis(properties.timeoutMs()))
+                .bearer(properties.apiKey());
+        // kong-http 当前公开 form/file 方法会校验 contentType 分支；这里通过可读集合写入字段，保持请求仍由 kong-http 编码发送。
+        spec.form().put("model", properties.model());
+        spec.form().put("response_format", "json");
         if (properties.language() != null && !properties.language().isBlank()) {
-            request.add("language", properties.language());
+            spec.form().put("language", properties.language());
         }
-        request.add("file", new ByteArrayResource(wav) {
-            @Override
-            public String getFilename() {
-                return "audio.wav";
-            }
-        });
-        return request;
+        spec.files().add(new FilePart("file", "audio.wav", PcmWaveEncoder.encode(pcm, format)));
+        return spec;
     }
 
     /**
@@ -122,7 +107,7 @@ public class OpenAiStreamingAsrAdapter implements StreamingAsrAdapter {
             throw new IllegalStateException("OpenAI ASR 返回了空转写结果");
         }
         try {
-            JsonNode root = objectMapper.readTree(response);
+            JsonNode root = Json.node(response);
             JsonNode text = root.path("text");
             if (text.isTextual() && !text.asText().isBlank()) {
                 return text.asText().trim();
@@ -140,20 +125,6 @@ public class OpenAiStreamingAsrAdapter implements StreamingAsrAdapter {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             throw new IllegalStateException("OpenAI API Key 未配置，请设置 OPENAI_API_KEY 或 KONG_VOICE_AGENT_OPENAI_API_KEY");
         }
-    }
-
-    /**
-     * 创建带超时的 RestClient，避免外部服务异常时无限阻塞音频流水线。
-     */
-    private RestClient restClient() {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        Duration timeout = Duration.ofMillis(properties.timeoutMs());
-        requestFactory.setConnectTimeout(timeout);
-        requestFactory.setReadTimeout(timeout);
-        return RestClient.builder()
-                .baseUrl(properties.baseUrl())
-                .requestFactory(requestFactory)
-                .build();
     }
 
     /**

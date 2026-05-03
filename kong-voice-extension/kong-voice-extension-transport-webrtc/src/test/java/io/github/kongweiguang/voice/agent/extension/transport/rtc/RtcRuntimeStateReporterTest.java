@@ -7,7 +7,7 @@ import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.session.SessionState;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -115,7 +115,7 @@ class RtcRuntimeStateReporterTest {
         List<JsonNode> sentEvents() throws IOException {
             List<JsonNode> events = new ArrayList<>();
             for (String message : sent) {
-                events.add(JsonUtils.MAPPER.readTree(message));
+                events.add(Json.node(message));
             }
             return events;
         }

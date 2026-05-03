@@ -1,8 +1,8 @@
 package io.github.kongweiguang.voice.agent.playback;
 
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.model.AgentEvent;
 import io.github.kongweiguang.voice.agent.session.SessionState;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -46,7 +46,7 @@ public class PlaybackDispatcher {
         }
         try {
             // AgentEvent 是统一下行外壳，序列化后直接作为 WebSocket 文本帧发送给前端。
-            String payload = JsonUtils.write(event);
+            String payload = Json.str(event);
             ReentrantLock lock = sendLocks.computeIfAbsent(webSocketSession.getId(), ignored -> new ReentrantLock());
             lock.lock();
             try {

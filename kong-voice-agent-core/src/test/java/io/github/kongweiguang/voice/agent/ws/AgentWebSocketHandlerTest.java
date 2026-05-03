@@ -7,7 +7,7 @@ import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.support.NoopStreamingAsrAdapter;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.ws.handler.AgentWebSocketHandler;
 import io.github.kongweiguang.voice.agent.ws.handler.WsTextMessageHandler;
 import io.github.kongweiguang.voice.agent.ws.handler.WsTextMessageHandlerRegistry;
@@ -82,7 +82,7 @@ class AgentWebSocketHandlerTest {
                 {"type":"unknown","payload":{}}
                 """));
 
-        JsonNode event = JsonUtils.MAPPER.readTree(ws.sent.getFirst());
+        JsonNode event = Json.node(ws.sent.getFirst());
         assertThat(event.get("type").asText()).isEqualTo("error");
         assertThat(event.at("/payload/code").asText()).isEqualTo("bad_message");
         assertThat(event.at("/payload/message").asText()).isEqualTo("unsupported type: unknown");

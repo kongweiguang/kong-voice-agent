@@ -14,7 +14,7 @@ import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.support.TestSessionStates;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
 import org.junit.jupiter.api.DisplayName;
@@ -428,7 +428,7 @@ class VoicePipelineConcurrencyTest {
         List<JsonNode> sentEvents() throws IOException {
             List<JsonNode> events = new ArrayList<>();
             for (String message : sent) {
-                events.add(JsonUtils.MAPPER.readTree(message));
+                events.add(Json.node(message));
             }
             return events;
         }
@@ -438,13 +438,7 @@ class VoicePipelineConcurrencyTest {
          */
         int countEvents(String type) {
             return (int) sent.stream()
-                    .map(message -> {
-                        try {
-                            return JsonUtils.MAPPER.readTree(message);
-                        } catch (IOException ex) {
-                            throw new IllegalStateException("解析测试事件失败", ex);
-                        }
-                    })
+                    .map(Json::node)
                     .filter(node -> type.equals(node.get("type").asText()))
                     .count();
         }

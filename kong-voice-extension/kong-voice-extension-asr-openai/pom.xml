@@ -25,12 +25,8 @@
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>io.github.kongweiguang</groupId>
+            <artifactId>kong-http</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.integration.openai;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kongweiguang.voice.agent.llm.LlmOrchestrator;
 import io.github.kongweiguang.voice.agent.extension.llm.autoconfigure.OpenAiLlmAutoConfiguration;
 import org.junit.jupiter.api.DisplayName;
@@ -20,8 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("OpenAI LLM 自动装配")
 class OpenAiLlmAutoConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(OpenAiLlmAutoConfiguration.class))
-            .withBean(ObjectMapper.class, ObjectMapper::new);
+            .withConfiguration(AutoConfigurations.of(OpenAiLlmAutoConfiguration.class));
 
     @Test
     @DisplayName("默认注册 OpenAI LLM 编排器")

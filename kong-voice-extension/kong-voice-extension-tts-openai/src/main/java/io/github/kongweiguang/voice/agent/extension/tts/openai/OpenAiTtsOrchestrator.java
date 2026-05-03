@@ -1,12 +1,10 @@
 package io.github.kongweiguang.voice.agent.extension.tts.openai;
 
+import io.github.kongweiguang.v1.http.client.Req;
+import io.github.kongweiguang.v1.http.client.Res;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
 import io.github.kongweiguang.voice.agent.tts.TtsOrchestrator;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -53,14 +51,15 @@ public class OpenAiTtsOrchestrator implements TtsOrchestrator {
      */
     private byte[] speechAudio(String text) {
         requireApiKey();
-        try {
-            byte[] audio = restClient().post()
-                    .uri(properties.speechPath())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                    .body(requestBody(text))
-                    .retrieve()
-                    .body(byte[].class);
+        try (Res response = Req.post(properties.baseUrl() + properties.speechPath())
+                .timeout(Duration.ofMillis(properties.timeoutMs()))
+                .bearer(properties.apiKey())
+                .json(requestBody(text))
+                .ok()) {
+            if (!response.isOk()) {
+                throw new IllegalStateException("OpenAI TTS HTTP 状态码: " + response.code() + "，响应体: " + response.str());
+            }
+            byte[] audio = response.bytes();
             if (audio == null || audio.length == 0) {
                 throw new IllegalStateException("OpenAI TTS 返回了空音频");
             }
@@ -145,16 +144,5 @@ public class OpenAiTtsOrchestrator implements TtsOrchestrator {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             throw new IllegalStateException("OpenAI API Key 未配置，请设置 OPENAI_API_KEY 或 KONG_VOICE_AGENT_OPENAI_API_KEY");
         }
-    }
-
-    private RestClient restClient() {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        Duration timeout = Duration.ofMillis(properties.timeoutMs());
-        requestFactory.setConnectTimeout(timeout);
-        requestFactory.setReadTimeout(timeout);
-        return RestClient.builder()
-                .baseUrl(properties.baseUrl())
-                .requestFactory(requestFactory)
-                .build();
     }
 }

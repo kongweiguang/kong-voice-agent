@@ -1,6 +1,6 @@
 # System State
 
-最后更新：2026-04-29
+最后更新：2026-05-03
 
 这份文档只维护项目当前已经完成并稳定沉淀下来的功能能力，便于跨会话快速了解系统现在已经具备什么。
 
@@ -17,6 +17,7 @@
 - EOU 与 TurnManager：已支持 VAD + EOU + endpointing 协同推进 turn committed。
 - LLM 编排：已支持 turn committed 后启动 LLM，当前应用默认使用 app 模块实现，也支持扩展模块方式接入 OpenAI LLM。
 - TTS 编排：已接入 OpenAI TTS 扩展，支持文本分段累计、音频回传和错误下行。
+- HTTP / SSE / JSON 基础能力：OpenAI ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS 和项目协议 JSON 工具已统一复用 `kong-http` 及其 JSON 门面。
 - 打断流程：已支持客户端主动 `interrupt` 和用户说话打断播报。
 - Hook 扩展：已提供 `VoicePipelineHook`，可观察音频、文本、turn commit、LLM、TTS 和 interruption 节点。
 - React 联调界面：已提供 `ui/` 产品化聊天界面，支持固定账号登录、`WS PCM / WebRTC` 切换、多会话、本地历史和 TTS 播放。

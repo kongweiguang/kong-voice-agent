@@ -16,6 +16,7 @@ Kong Voice Agent 是一个面向生产场景设计的 Java Voice Agent 后端框
 - 通用 ID：`IdUtils` 支持不可预测 session id 和趋势递增的雪花 ID
 - VAD：优先加载 `models/silero_vad.onnx`，模型不可用时自动回退到 RMS fallback
 - ASR / LLM / TTS：应用默认组合 `kong-voice-extension-*` 提供的 OpenAI ASR / TTS 扩展与应用侧 LLM 实现，可通过 Spring Bean 替换；仓库内也提供可单独引入的 OpenAI LLM 扩展模块
+- HTTP / SSE / JSON：OpenAI ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS 和项目协议 JSON 工具统一使用 `kong-http` 提供的请求与 JSON 门面
 - 打断：支持客户端主动 `interrupt`，也支持 Agent 播报中用户重新说话触发打断
 - React UI：`ui/` 使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm，提供豆包风格的产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、底部固定输入、`WS PCM / WebRTC` 传输模式切换、发送/打断一体主按钮、连接、TTS 自动播放和文字区播报动效；每个前端会话拥有独立控制面 WebSocket，多个会话连接可同时存在，切换会话不会断开其他在线会话；会话列表和消息快照会写入浏览器 `localStorage`
 
@@ -230,13 +231,13 @@ React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频
 
 各模块职责：
 
-- `kong-voice-agent-core`：承载 Session、TurnManager、EOU 抽象、默认 WebSocket 处理器、协议模型、ASR / VAD / LLM / TTS 抽象和 `VoicePipelineHook`。
-- `kong-voice-extension-asr-openai`：承载 OpenAI ASR 自动配置，默认实现使用 `/audio/transcriptions`。
-- `kong-voice-extension-llm-openai`：承载 OpenAI LLM 自动配置，默认实现使用 `/chat/completions` SSE 输出文本 chunk；当前 app 默认未引入该模块。
+- `kong-voice-agent-core`：承载 Session、TurnManager、EOU 抽象、默认 WebSocket 处理器、协议模型、ASR / VAD / LLM / TTS 抽象和 `VoicePipelineHook`，协议 JSON 序列化入口复用 `kong-http` 的 JSON 门面。
+- `kong-voice-extension-asr-openai`：承载 OpenAI ASR 自动配置，默认实现使用 `kong-http` 调用 `/audio/transcriptions`。
+- `kong-voice-extension-llm-openai`：承载 OpenAI LLM 自动配置，默认实现使用 `kong-http` SSE 调用 `/chat/completions` 输出文本 chunk；当前 app 默认未引入该模块。
 - `kong-voice-extension-eou-livekit`：承载默认 LiveKit MultilingualModel 风格 EOU 自动配置和 ONNX detector。
 - `kong-voice-extension-vad-silero`：承载默认 Silero VAD、`kong-voice-agent.vad.*` / `kong-voice-agent.onnx.*` 配置绑定和 ONNX Runtime 会话工厂。
-- `kong-voice-extension-tts-openai`：承载 OpenAI TTS 自动配置，默认实现使用 `/audio/speech`。
-- `kong-voice-agent-app`：承载 Spring Boot 应用入口、`/ws/agent` 注册、运行配置、默认扩展组合和 LLM 实现。
+- `kong-voice-extension-tts-openai`：承载 OpenAI TTS 自动配置，默认实现使用 `kong-http` 调用 `/audio/speech`。
+- `kong-voice-agent-app`：承载 Spring Boot 应用入口、`/ws/agent` 注册、运行配置、默认扩展组合和 LLM 实现；应用侧 AgentScope 模型传输通过 `KongHttpTransport` 适配到 `kong-http`。
 
 ## 配置入口
 
@@ -378,10 +379,10 @@ KONG_VOICE_AGENT_EOU_TOKENIZER_PATH=file:/absolute/path/to/tokenizer.json
 
 ## OpenAI ASR / TTS 联调
 
-默认扩展直接对接 OpenAI Audio API：
+默认扩展通过 `kong-http` 对接 OpenAI Audio API：
 
-- ASR：在 `audio_end` 或端点提交时把累计 PCM 包装成 WAV，通过 `/audio/transcriptions` 发起 multipart 转写，默认模型为 `gpt-4o-mini-transcribe`。
-- TTS：按 turnId 累计 LLM 文本到句子边界或最后一个 chunk，再调用 `/audio/speech` 获取二进制音频，默认模型为 `gpt-4o-mini-tts`，默认返回 `wav`。
+- ASR：在 `audio_end` 或端点提交时把累计 PCM 包装成 WAV，通过 `kong-http` multipart 请求 `/audio/transcriptions` 发起转写，默认模型为 `gpt-4o-mini-transcribe`。
+- TTS：按 turnId 累计 LLM 文本到句子边界或最后一个 chunk，再通过 `kong-http` JSON 请求 `/audio/speech` 获取二进制音频，默认模型为 `gpt-4o-mini-tts`，默认返回 `wav`。
 
 启动前需要配置 OpenAI API Key：
 

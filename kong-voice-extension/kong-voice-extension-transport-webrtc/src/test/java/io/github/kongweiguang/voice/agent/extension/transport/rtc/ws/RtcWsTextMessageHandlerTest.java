@@ -11,7 +11,7 @@ import io.github.kongweiguang.voice.agent.eou.EouConfig;
 import io.github.kongweiguang.voice.agent.playback.PlaybackDispatcher;
 import io.github.kongweiguang.voice.agent.extension.transport.rtc.RtcSessionService;
 import io.github.kongweiguang.voice.agent.session.SessionState;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.ws.WsMessage;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
 import org.junit.jupiter.api.DisplayName;
@@ -83,7 +83,7 @@ class RtcWsTextMessageHandlerTest {
                 .handle(new WsTextMessageContext(
                         webSocketSession,
                         sessionState,
-                        new WsMessage("rtc_offer", JsonUtils.MAPPER.readTree("""
+                        new WsMessage("rtc_offer", Json.node("""
                                 {"sessionId":"sess_ws","type":"offer","sdp":"offer-sdp"}
                                 """))
                 ));
@@ -105,7 +105,7 @@ class RtcWsTextMessageHandlerTest {
                 .handle(new WsTextMessageContext(
                         webSocketSession,
                         sessionState,
-                        new WsMessage("rtc_ice_candidate", JsonUtils.MAPPER.readTree("""
+                        new WsMessage("rtc_ice_candidate", Json.node("""
                                 {"sessionId":"sess_ws","sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:1 1 UDP 1 127.0.0.1 1234 typ host"}
                                 """))
                 ));
@@ -124,7 +124,7 @@ class RtcWsTextMessageHandlerTest {
                 .handle(new WsTextMessageContext(
                         webSocketSession,
                         sessionState,
-                        new WsMessage("rtc_close", JsonUtils.MAPPER.readTree("""
+                        new WsMessage("rtc_close", Json.node("""
                                 {"sessionId":"sess_ws"}
                                 """))
                 ));
@@ -143,7 +143,7 @@ class RtcWsTextMessageHandlerTest {
                 .handle(new WsTextMessageContext(
                         webSocketSession,
                         sessionState,
-                        new WsMessage("rtc_close", JsonUtils.MAPPER.readTree("{}"))
+                        new WsMessage("rtc_close", Json.node("{}"))
                 ));
 
         verify(rtcSessionService).closeSession("sess_ws");
@@ -186,7 +186,7 @@ class RtcWsTextMessageHandlerTest {
         List<JsonNode> sentEvents() throws IOException {
             List<JsonNode> events = new ArrayList<>();
             for (String message : sent) {
-                events.add(JsonUtils.MAPPER.readTree(message));
+                events.add(Json.node(message));
             }
             return events;
         }

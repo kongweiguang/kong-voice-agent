@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.extension.llm.autoconfigure;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kongweiguang.voice.agent.extension.llm.openai.OpenAiLlmOrchestrator;
 import io.github.kongweiguang.voice.agent.extension.llm.openai.OpenAiLlmProperties;
 import io.github.kongweiguang.voice.agent.llm.LlmOrchestrator;
@@ -22,7 +20,7 @@ public class OpenAiLlmAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(LlmOrchestrator.class)
-    public LlmOrchestrator llmOrchestrator(OpenAiLlmProperties llmProperties, ObjectMapper objectMapper) {
-        return new OpenAiLlmOrchestrator(llmProperties, objectMapper);
+    public LlmOrchestrator llmOrchestrator(OpenAiLlmProperties llmProperties) {
+        return new OpenAiLlmOrchestrator(llmProperties);
     }
 }

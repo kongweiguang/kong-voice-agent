@@ -15,7 +15,7 @@ import io.github.kongweiguang.voice.agent.playback.SessionAudioPlaybackPolicy;
 import io.github.kongweiguang.voice.agent.session.SessionManager;
 import io.github.kongweiguang.voice.agent.session.SessionState;
 import io.github.kongweiguang.voice.agent.tts.TtsChunk;
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.vad.VadDecision;
 import io.github.kongweiguang.voice.agent.vad.VadEngine;
 import org.junit.jupiter.api.DisplayName;
@@ -182,7 +182,7 @@ class VoicePipelineEouTest {
         List<JsonNode> sentEvents() throws IOException {
             List<JsonNode> events = new ArrayList<>();
             for (String message : sent) {
-                events.add(JsonUtils.MAPPER.readTree(message));
+                events.add(Json.node(message));
             }
             return events;
         }

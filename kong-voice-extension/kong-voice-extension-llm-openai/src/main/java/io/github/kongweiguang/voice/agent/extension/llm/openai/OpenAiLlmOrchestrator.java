@@ -1,27 +1,29 @@
 package io.github.kongweiguang.voice.agent.extension.llm.openai;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.kongweiguang.v1.http.client.Req;
+import io.github.kongweiguang.v1.http.client.Res;
+import io.github.kongweiguang.v1.http.client.consts.ContentType;
+import io.github.kongweiguang.v1.http.client.consts.Method;
+import io.github.kongweiguang.v1.http.client.spec.SseReqSpec;
+import io.github.kongweiguang.v1.http.client.sse.SseEvent;
+import io.github.kongweiguang.v1.http.client.sse.SseListener;
 import io.github.kongweiguang.voice.agent.llm.LlmChunk;
 import io.github.kongweiguang.voice.agent.llm.LlmOrchestrator;
 import io.github.kongweiguang.voice.agent.llm.LlmRequest;
+import io.github.kongweiguang.v1.json.Json;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -37,75 +39,107 @@ public class OpenAiLlmOrchestrator implements LlmOrchestrator {
     private final OpenAiLlmProperties properties;
 
     /**
-     * JSON 解析器，用于读取 SSE chunk 并保留原始响应。
+     * SSE 等待超时额外缓冲毫秒数，避免边界耗时误判。
      */
-    private final ObjectMapper objectMapper;
+    private static final long SSE_TIMEOUT_BUFFER_MS = 1000L;
 
     @Override
     public void stream(LlmRequest request, Consumer<LlmChunk> chunkConsumer) {
         requireApiKey();
-        HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(properties.baseUrl() + properties.chatCompletionsPath()))
-                .timeout(Duration.ofMillis(properties.timeoutMs()))
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .header(HttpHeaders.ACCEPT, MediaType.TEXT_EVENT_STREAM_VALUE)
-                .POST(HttpRequest.BodyPublishers.ofString(writeRequestBody(request), StandardCharsets.UTF_8))
-                .build();
         try {
-            HttpResponse<InputStream> response = httpClient().send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("OpenAI LLM 调用失败，HTTP 状态码: " + response.statusCode()
-                        + "，响应体: " + readBody(response.body()));
-            }
-            readSse(response.body(), request, chunkConsumer);
+            streamSse(request, chunkConsumer);
         } catch (Exception ex) {
             throw new IllegalStateException("OpenAI LLM 调用失败，请检查 API Key、模型名称和网络连通性", ex);
         }
     }
 
     /**
-     * 按 SSE chunk 顺序输出文本，并确保最后一定给流水线补一个 last=true 结束标记。
+     * 使用 kong-http SSE 客户端发起流式请求，并同步等待当前请求完成。
      */
-    private void readSse(InputStream bodyStream, LlmRequest request, Consumer<LlmChunk> chunkConsumer) throws Exception {
-        Integer nextSeq = 0;
-        String pendingText = null;
-        String pendingRawResponse = null;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(bodyStream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank() || !line.startsWith("data:")) {
-                    continue;
-                }
-                String data = line.substring(5).strip();
-                if ("[DONE]".equals(data)) {
-                    break;
-                }
-                JsonNode root = objectMapper.readTree(data);
-                String content = extractContent(root);
-                if (!content.isEmpty()) {
-                    if (pendingText != null) {
-                        chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq, pendingText, false, pendingRawResponse));
-                        nextSeq++;
-                    }
-                    pendingText = content;
-                    pendingRawResponse = data;
-                }
-                if (hasFinishReason(root)) {
-                    if (pendingText != null) {
-                        chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq, pendingText, true, pendingRawResponse));
-                    } else {
-                        chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq, "", true, data));
-                    }
-                    return;
-                }
+    private void streamSse(LlmRequest request, Consumer<LlmChunk> chunkConsumer) throws InterruptedException {
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicInteger nextSeq = new AtomicInteger();
+        AtomicReference<String> pendingText = new AtomicReference<>();
+        AtomicReference<String> pendingRawResponse = new AtomicReference<>();
+        AtomicBoolean terminalEmitted = new AtomicBoolean();
+        SseListener listener = new SseListener() {
+            @Override
+            public void event(SseReqSpec req, SseEvent msg) {
+                handleSseData(msg.data(), request, chunkConsumer, nextSeq, pendingText, pendingRawResponse, terminalEmitted, done);
             }
+
+            @Override
+            public void fail(SseReqSpec req, Res res, Throwable t) {
+                failure.set(t == null ? new IllegalStateException("OpenAI LLM SSE 连接失败") : t);
+                done.countDown();
+            }
+
+            @Override
+            public void closed(SseReqSpec req) {
+                done.countDown();
+            }
+        };
+        Req.sse(properties.baseUrl() + properties.chatCompletionsPath())
+                .timeout(Duration.ofMillis(properties.timeoutMs()))
+                .method(Method.POST)
+                .bearer(properties.apiKey())
+                .header("Accept", ContentType.EVENT_STREAM.value())
+                .json(requestBody(request))
+                .sseListener(listener)
+                .ok();
+        boolean completed = done.await(properties.timeoutMs() + SSE_TIMEOUT_BUFFER_MS, TimeUnit.MILLISECONDS);
+        listener.closeCon();
+        if (!completed) {
+            throw new IllegalStateException("OpenAI LLM SSE 读取超时");
         }
-        if (pendingText != null) {
-            chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq, pendingText, true, pendingRawResponse));
+        if (failure.get() != null) {
+            throw new IllegalStateException("OpenAI LLM SSE 读取失败", failure.get());
+        }
+        if (terminalEmitted.get()) {
             return;
         }
-        chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq, "", true, null));
+        if (pendingText.get() != null) {
+            chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq.get(), pendingText.get(), true, pendingRawResponse.get()));
+            return;
+        }
+        chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq.get(), "", true, null));
+    }
+
+    /**
+     * 按 SSE data 顺序输出文本，并确保最后一定给流水线补一个 last=true 结束标记。
+     */
+    private void handleSseData(String data, LlmRequest request, Consumer<LlmChunk> chunkConsumer, AtomicInteger nextSeq,
+                               AtomicReference<String> pendingText, AtomicReference<String> pendingRawResponse,
+                               AtomicBoolean terminalEmitted, CountDownLatch done) {
+        if (data == null || data.isBlank()) {
+            return;
+        }
+        String trimmedData = data.strip();
+        if ("[DONE]".equals(trimmedData)) {
+            done.countDown();
+            return;
+        }
+        JsonNode root = Json.node(trimmedData);
+        String content = extractContent(root);
+        if (!content.isEmpty()) {
+            if (pendingText.get() != null) {
+                chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq.getAndIncrement(), pendingText.get(), false, pendingRawResponse.get()));
+            }
+            pendingText.set(content);
+            pendingRawResponse.set(trimmedData);
+        }
+        if (hasFinishReason(root)) {
+            if (pendingText.get() != null) {
+                chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq.get(), pendingText.get(), true, pendingRawResponse.get()));
+                pendingText.set(null);
+                pendingRawResponse.set(null);
+            } else {
+                chunkConsumer.accept(new LlmChunk(request.turnId(), nextSeq.get(), "", true, trimmedData));
+            }
+            terminalEmitted.set(true);
+            done.countDown();
+        }
     }
 
     /**
@@ -163,22 +197,18 @@ public class OpenAiLlmOrchestrator implements LlmOrchestrator {
     /**
      * 构造 OpenAI Chat Completions 请求体。
      */
-    private String writeRequestBody(LlmRequest request) {
-        try {
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", properties.model());
-            requestBody.put("stream", true);
-            if (properties.temperature() != null) {
-                requestBody.put("temperature", properties.temperature());
-            }
-            List<Map<String, Object>> messages = new ArrayList<>();
-            messages.add(message("system", properties.systemPrompt()));
-            messages.add(message("user", request.finalTranscript()));
-            requestBody.put("messages", messages);
-            return objectMapper.writeValueAsString(requestBody);
-        } catch (Exception ex) {
-            throw new IllegalStateException("OpenAI LLM 请求体序列化失败", ex);
+    private Map<String, Object> requestBody(LlmRequest request) {
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", properties.model());
+        requestBody.put("stream", true);
+        if (properties.temperature() != null) {
+            requestBody.put("temperature", properties.temperature());
         }
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(message("system", properties.systemPrompt()));
+        messages.add(message("user", request.finalTranscript()));
+        requestBody.put("messages", messages);
+        return requestBody;
     }
 
     private Map<String, Object> message(String role, String content) {
@@ -191,20 +221,6 @@ public class OpenAiLlmOrchestrator implements LlmOrchestrator {
     private void requireApiKey() {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             throw new IllegalStateException("OpenAI API Key 未配置，请设置 OPENAI_API_KEY 或 KONG_VOICE_AGENT_OPENAI_API_KEY");
-        }
-    }
-
-    private HttpClient httpClient() {
-        return HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(properties.timeoutMs()))
-                .build();
-    }
-
-    private String readBody(InputStream body) {
-        try (InputStream input = body) {
-            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (Exception ex) {
-            return "<unavailable>";
         }
     }
 }

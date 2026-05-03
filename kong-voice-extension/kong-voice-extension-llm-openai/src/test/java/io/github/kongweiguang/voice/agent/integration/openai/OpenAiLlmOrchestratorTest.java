@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.integration.openai;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.kongweiguang.voice.agent.extension.llm.openai.OpenAiLlmOrchestrator;
 import io.github.kongweiguang.voice.agent.extension.llm.openai.OpenAiLlmProperties;
@@ -47,7 +45,7 @@ class OpenAiLlmOrchestratorTest {
         server.createContext("/chat/completions", exchange -> {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] response = String.join("\n",
+            byte[] response = String.join("\n\n",
                     "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"},\"finish_reason\":null}]}",
                     "data: {\"choices\":[{\"delta\":{\"content\":\"，世界\"},\"finish_reason\":null}]}",
                     "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
@@ -87,7 +85,7 @@ class OpenAiLlmOrchestratorTest {
     void shouldEmitTerminalChunkWhenNoTextReturned() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/chat/completions", exchange -> {
-            byte[] response = String.join("\n",
+            byte[] response = String.join("\n\n",
                     "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
                     "data: [DONE]",
                     "").getBytes(StandardCharsets.UTF_8);
@@ -122,6 +120,6 @@ class OpenAiLlmOrchestratorTest {
     private OpenAiLlmOrchestrator newOrchestrator(String baseUrl, String apiKey) {
         OpenAiLlmProperties properties = new OpenAiLlmProperties(
                 apiKey, baseUrl, "/chat/completions", "gpt-4o-mini", "请用中文回复", null, 1000);
-        return new OpenAiLlmOrchestrator(properties, new ObjectMapper());
+        return new OpenAiLlmOrchestrator(properties);
     }
 }

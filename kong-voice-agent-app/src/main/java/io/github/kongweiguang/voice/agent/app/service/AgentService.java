@@ -1,6 +1,5 @@
 package io.github.kongweiguang.voice.agent.app.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
@@ -11,9 +10,9 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.OpenAIChatModel;
-import io.agentscope.core.model.transport.OkHttpTransport;
 import io.agentscope.core.session.InMemorySession;
 import io.agentscope.core.session.Session;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.app.dto.ChatEvent;
 import io.github.kongweiguang.voice.agent.app.util.MsgUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,11 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class AgentService {
-    /**
-     * JSON 解析器，用于尽量保留底层 AgentScope 事件原始结构。
-     */
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
     /**
      * OpenAI 兼容模型 API Key。
      */
@@ -107,7 +101,7 @@ public class AgentService {
                 .apiKey(apiKey)
                 .modelName(modelName)
                 .baseUrl(baseUrl)
-                .httpTransport(OkHttpTransport.builder().build())
+                .httpTransport(new KongHttpTransport())
                 .formatter(new OpenAIChatFormatter())
                 .generateOptions(
                         GenerateOptions.builder().additionalBodyParam("chat_template_kwargs", Map.of("enable_thinking", true)).build()
@@ -153,7 +147,7 @@ public class AgentService {
      */
     private String rawResponse(Object event) {
         try {
-            return OBJECT_MAPPER.writeValueAsString(event);
+            return Json.str(event);
         } catch (Exception ex) {
             return String.valueOf(event);
         }

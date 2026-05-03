@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.extension.asr.openai;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapter;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapterFactory;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
@@ -19,15 +17,10 @@ public class OpenAiStreamingAsrAdapterFactory implements StreamingAsrAdapterFact
     private final OpenAiAsrProperties properties;
 
     /**
-     * 共享 JSON 解析器。
-     */
-    private final ObjectMapper objectMapper;
-
-    /**
      * 为每个会话创建独立 ASR 适配器，避免音频累计状态串线。
      */
     @Override
     public StreamingAsrAdapter create(String sessionId, AudioFormatSpec format) {
-        return new OpenAiStreamingAsrAdapter(format, properties, objectMapper);
+        return new OpenAiStreamingAsrAdapter(format, properties);
     }
 }

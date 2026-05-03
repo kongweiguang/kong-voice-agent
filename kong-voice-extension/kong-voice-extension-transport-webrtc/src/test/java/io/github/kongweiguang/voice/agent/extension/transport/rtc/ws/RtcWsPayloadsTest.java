@@ -1,6 +1,6 @@
 package io.github.kongweiguang.voice.agent.extension.transport.rtc.ws;
 
-import io.github.kongweiguang.voice.agent.util.JsonUtils;
+import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.ws.WsMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -21,7 +21,7 @@ class RtcWsPayloadsTest {
     @DisplayName("rtc_close 允许省略 sessionId 并回退到当前控制面 session")
     void closeFallsBackToCurrentSessionId() throws Exception {
         RtcWsPayloads.RtcCloseRequest request = RtcWsPayloads.close(
-                new WsMessage("rtc_close", JsonUtils.MAPPER.readTree("{}")),
+                new WsMessage("rtc_close", Json.node("{}")),
                 "sess_current"
         );
 
@@ -31,7 +31,7 @@ class RtcWsPayloadsTest {
     @Test
     @DisplayName("rtc_offer 的 sessionId 必须与当前控制面 session 一致")
     void offerRequiresMatchingControlSession() throws Exception {
-        WsMessage message = new WsMessage("rtc_offer", JsonUtils.MAPPER.readTree("""
+        WsMessage message = new WsMessage("rtc_offer", Json.node("""
                 {"sessionId":"sess_other","type":"offer","sdp":"offer-sdp"}
                 """));
 
@@ -43,7 +43,7 @@ class RtcWsPayloadsTest {
     @Test
     @DisplayName("rtc_ice_candidate 的 sdpMLineIndex 必须是整数")
     void iceCandidateRequiresIntegerMLineIndex() throws Exception {
-        WsMessage message = new WsMessage("rtc_ice_candidate", JsonUtils.MAPPER.readTree("""
+        WsMessage message = new WsMessage("rtc_ice_candidate", Json.node("""
                 {"sessionId":"sess_current","sdpMid":"0","sdpMLineIndex":"zero","candidate":"candidate"}
                 """));
 

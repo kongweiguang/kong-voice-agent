@@ -1,6 +1,4 @@
 package io.github.kongweiguang.voice.agent.extension.asr.autoconfigure;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapterFactory;
 import io.github.kongweiguang.voice.agent.extension.asr.openai.OpenAiAsrProperties;
 import io.github.kongweiguang.voice.agent.extension.asr.openai.OpenAiStreamingAsrAdapterFactory;
@@ -22,8 +20,7 @@ public class OpenAiAsrAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean(StreamingAsrAdapterFactory.class)
-    public StreamingAsrAdapterFactory streamingAsrAdapterFactory(OpenAiAsrProperties asrProperties,
-                                                                 ObjectMapper objectMapper) {
-        return new OpenAiStreamingAsrAdapterFactory(asrProperties, objectMapper);
+    public StreamingAsrAdapterFactory streamingAsrAdapterFactory(OpenAiAsrProperties asrProperties) {
+        return new OpenAiStreamingAsrAdapterFactory(asrProperties);
     }
 }

@@ -80,6 +80,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-http</artifactId>
+                <version>1.0</version>
+            </dependency>
+            <dependency>
                 <groupId>com.microsoft.onnxruntime</groupId>
                 <artifactId>${onnxruntime.artifactId}</artifactId>
                 <version>${onnxruntime.version}</version>

@@ -3,6 +3,7 @@ package io.github.kongweiguang.voice.agent.ws.handler;
 import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.ws.WsMessageType;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
  * @author kongweiguang
  */
 @Component
+@Slf4j
 public class TextWsTextMessageHandler implements WsTextMessageHandler {
     /**
      * 语音流水线服务，负责将文本转为 committed turn 并进入 LLM/TTS。
@@ -38,6 +40,11 @@ public class TextWsTextMessageHandler implements WsTextMessageHandler {
     @Override
     public void handle(WsTextMessageContext context) {
         // 文本消息直接进入 committed turn 路径，后续由流水线统一下发 asr_final 和 Agent 回复。
+        log.info("Handle text input: ws={}, sessionId={}, text={}, currentTurnId={}",
+                context.webSocketSession().getId(),
+                context.sessionState().sessionId(),
+                context.message().textPayload(),
+                context.sessionState().currentTurnId());
         pipelineService.acceptText(context.sessionState(), context.webSocketSession(), context.message().textPayload());
     }
 }

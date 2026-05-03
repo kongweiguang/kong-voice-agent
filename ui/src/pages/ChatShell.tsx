@@ -92,6 +92,8 @@ interface ConversationRecord extends ConversationSummary {
   sessionId?: string | null;
   /** 当前会话最近一次活跃 turnId。 */
   currentTurnId?: string | null;
+  /** 当前会话最近一次完成轮次的指标快照。 */
+  latestMetrics?: TurnMetricsView | null;
   /** 该会话的本地消息快照。 */
   messages: ChatMessage[];
   /** 当前会话使用的媒体传输模式。 */
@@ -116,6 +118,34 @@ interface TtsPlaybackItem {
   seq: number;
   /** 后端返回的 base64 音频字节。 */
   audioBase64: string;
+}
+
+/** 当前会话展示用的 turn 指标快照。 */
+interface TurnMetricsView {
+  /** 指标所属 turn。 */
+  turnId: string | null;
+  /** 当前指标阶段。 */
+  stage: string;
+  /** 当前 turn 来源。 */
+  source: string;
+  /** ASR 首次响应时间。 */
+  asrResponseLatencyMs: number | null;
+  /** ASR 总耗时。 */
+  asrDurationMs: number | null;
+  /** LLM 首字时间。 */
+  llmResponseLatencyMs: number | null;
+  /** LLM 总耗时。 */
+  llmDurationMs: number | null;
+  /** TTS 首包时间。 */
+  ttsResponseLatencyMs: number | null;
+  /** TTS 总耗时。 */
+  ttsDurationMs: number | null;
+  /** 说完话到 LLM 首字时间。 */
+  speechEndToLlmFirstTokenMs: number | null;
+  /** 说完话到 TTS 首包时间。 */
+  speechEndToTtsFirstChunkMs: number | null;
+  /** 服务端事件时间。 */
+  timestamp: string | null;
 }
 
 /** 当前前端会话对应的 RTC 运行态。 */
@@ -177,6 +207,7 @@ export function ChatShell() {
   const [audioInputStatus, setAudioInputStatus] = useState("麦克风未开启");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(initialActiveConversation.messages);
+  const [latestMetrics, setLatestMetrics] = useState<TurnMetricsView | null>(initialActiveConversation.latestMetrics ?? null);
   const [transportKind, setTransportKind] = useState<TransportKind>(initialActiveConversation.transportKind);
   const [connectionStates, setConnectionStates] = useState<Record<string, ConnectionState>>({});
   const [connectionErrors, setConnectionErrors] = useState<Record<string, string | null>>({});
@@ -305,6 +336,7 @@ export function ChatShell() {
                 ...conversation,
                 sessionId,
                 currentTurnId,
+                latestMetrics,
                 messages: sanitizeMessagesForStorage(messages),
                 transportKind,
                 preview: buildConversationPreview(messages, conversation.preview),
@@ -315,7 +347,7 @@ export function ChatShell() {
       );
     }, 0);
     return () => window.clearTimeout(syncTimer);
-  }, [activeConversationId, currentTurnId, messages, sessionId, transportKind]);
+  }, [activeConversationId, currentTurnId, latestMetrics, messages, sessionId, transportKind]);
 
   useEffect(() => {
     recordingRef.current = recording;
@@ -446,6 +478,7 @@ export function ChatShell() {
     setCurrentTurnId(null);
     currentTurnIdRef.current = null;
     invalidTurnIdsRef.current.clear();
+    setLatestMetrics(null);
     setTurnActive(false);
     if (transportKind === "ws-pcm") {
       stopMicrophone(false);
@@ -799,6 +832,7 @@ export function ChatShell() {
     setInput("");
     setSessionId(conversation.sessionId ?? null);
     setCurrentTurnId(conversation.currentTurnId ?? null);
+    setLatestMetrics(conversation.latestMetrics ?? null);
     setTransportKind(conversation.transportKind);
     currentTurnIdRef.current = conversation.currentTurnId ?? null;
     setTurnActive(conversation.messages.some((message) => message.streaming));
@@ -831,6 +865,24 @@ export function ChatShell() {
           updatedAtMs: Date.now(),
         };
       }),
+    );
+  }
+
+  /** 更新指定会话最近一次完成轮次的指标快照。 */
+  function updateConversationLatestMetrics(conversationId: string, metrics: TurnMetricsView | null) {
+    if (conversationId === activeConversationIdRef.current) {
+      setLatestMetrics(metrics);
+    }
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? {
+              ...conversation,
+              latestMetrics: metrics,
+              updatedAtMs: Date.now(),
+            }
+          : conversation,
+      ),
     );
   }
 
@@ -931,6 +983,19 @@ export function ChatShell() {
     }
 
     switch (event.type) {
+      case "state_changed": {
+        const state = readPayloadText(event, "state");
+        if (
+          active &&
+          recordingRef.current &&
+          resolveConversationTransportKind(sessionId) === "ws-pcm" &&
+          (state === "USER_TURN_COMMITTED" || state === "AGENT_THINKING" || state === "AGENT_SPEAKING")
+        ) {
+          stopMicrophone(false);
+          setAudioInputStatus("本轮语音已提交，等待回复");
+        }
+        break;
+      }
       case "asr_final":
         upsertUserMessage(sessionId, event);
         break;
@@ -955,6 +1020,9 @@ export function ChatShell() {
         if (event.payload?.["isLast"] === true) {
           updateConversationMessages(sessionId, (current) => markStreamingDone(current));
         }
+        break;
+      case "turn_metrics":
+        handleTurnMetricsEvent(sessionId, event);
         break;
       case "rtc_ice_candidate":
         addRemoteRtcIceCandidate(sessionId, event);
@@ -986,6 +1054,37 @@ export function ChatShell() {
       default:
         break;
     }
+  }
+
+  /** 在一轮对话结束后，把后端耗时指标整理成易读摘要。 */
+  function handleTurnMetricsEvent(sessionId: string, event: AgentEventEnvelope) {
+    const stage = readPayloadText(event, "stage");
+    const metrics = buildTurnMetricsView(event);
+    if (metrics) {
+      updateConversationLatestMetrics(sessionId, metrics);
+    }
+    if (stage !== "tts_completed") {
+      return;
+    }
+    const summary = formatTurnMetricsSummary(event);
+    if (!summary) {
+      return;
+    }
+    updateConversationMessages(sessionId, (current) => {
+      const alreadyExists = current.some(
+        (message) => message.role === "system" && message.turnId === event.turnId && message.content === summary,
+      );
+      if (alreadyExists) {
+        return current;
+      }
+      return [
+        ...current,
+        {
+          ...systemMessage(summary),
+          turnId: event.turnId,
+        },
+      ];
+    });
   }
 
   /** 将 asr_final 事件固化为用户消息。 */
@@ -1523,10 +1622,11 @@ export function ChatShell() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pb-40 pt-6 md:px-8 md:pb-44">
           <div className="mx-auto flex min-h-full max-w-3xl flex-col">
+            <TurnMetricsPanel metrics={latestMetrics} />
             {emptyConversation ? (
               <EmptyConversation connected={connected} onUsePrompt={sendTextMessage} />
             ) : (
-              <div className="flex flex-col gap-6">
+              <div className="mt-6 flex flex-col gap-6">
                 {messages.map((message) => (
                   <MessageBubble key={message.id} message={message} />
                 ))}
@@ -2044,6 +2144,7 @@ function createConversationRecord(transportKind: TransportKind = "ws-pcm"): Conv
     active: true,
     sessionId: null,
     currentTurnId: null,
+    latestMetrics: null,
     messages: [],
     transportKind,
     createdAtMs: now,
@@ -2095,6 +2196,7 @@ function normalizeConversationRecord(item: Partial<ConversationRecord> | null | 
     active: false,
     sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
     currentTurnId: typeof item.currentTurnId === "string" ? item.currentTurnId : null,
+    latestMetrics: normalizeTurnMetricsView(item.latestMetrics),
     messages,
     transportKind: item.transportKind === "webrtc" ? "webrtc" : "ws-pcm",
     createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : now,
@@ -2116,6 +2218,33 @@ function normalizeChatMessage(message: Partial<ChatMessage> | null | undefined):
     streaming: false,
     speaking: false,
     createdAt: message.createdAt ? new Date(message.createdAt) : new Date(),
+  };
+}
+
+/** 标准化本地缓存的指标快照。 */
+function normalizeTurnMetricsView(metrics: unknown): TurnMetricsView | null {
+  if (!metrics || typeof metrics !== "object") {
+    return null;
+  }
+  const value = metrics as Partial<TurnMetricsView>;
+  if (typeof value.stage !== "string") {
+    return null;
+  }
+  return {
+    turnId: typeof value.turnId === "string" ? value.turnId : null,
+    stage: value.stage,
+    source: typeof value.source === "string" ? value.source : "unknown",
+    asrResponseLatencyMs: typeof value.asrResponseLatencyMs === "number" ? value.asrResponseLatencyMs : null,
+    asrDurationMs: typeof value.asrDurationMs === "number" ? value.asrDurationMs : null,
+    llmResponseLatencyMs: typeof value.llmResponseLatencyMs === "number" ? value.llmResponseLatencyMs : null,
+    llmDurationMs: typeof value.llmDurationMs === "number" ? value.llmDurationMs : null,
+    ttsResponseLatencyMs: typeof value.ttsResponseLatencyMs === "number" ? value.ttsResponseLatencyMs : null,
+    ttsDurationMs: typeof value.ttsDurationMs === "number" ? value.ttsDurationMs : null,
+    speechEndToLlmFirstTokenMs:
+      typeof value.speechEndToLlmFirstTokenMs === "number" ? value.speechEndToLlmFirstTokenMs : null,
+    speechEndToTtsFirstChunkMs:
+      typeof value.speechEndToTtsFirstChunkMs === "number" ? value.speechEndToTtsFirstChunkMs : null,
+    timestamp: typeof value.timestamp === "string" ? value.timestamp : null,
   };
 }
 
@@ -2179,6 +2308,20 @@ function formatConversationTime(updatedAtMs: number) {
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" }).format(new Date(updatedAtMs));
 }
 
+/** 格式化指标更新时间。 */
+function formatMetricsTimestamp(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 /** 从 payload 中读取字符串字段。 */
 function readPayloadText(event: AgentEventEnvelope, field: string) {
   const value = event.payload?.[field];
@@ -2189,6 +2332,155 @@ function readPayloadText(event: AgentEventEnvelope, field: string) {
 function readPayloadNumber(event: AgentEventEnvelope, field: string, defaultValue: number) {
   const value = event.payload?.[field];
   return typeof value === "number" ? value : defaultValue;
+}
+
+/** 从 payload 中读取可选数字字段。 */
+function readPayloadOptionalNumber(event: AgentEventEnvelope, field: string) {
+  const value = event.payload?.[field];
+  return typeof value === "number" ? value : null;
+}
+
+/** 将 turn_metrics 事件转换为当前会话可展示的指标快照。 */
+function buildTurnMetricsView(event: AgentEventEnvelope): TurnMetricsView | null {
+  const stage = readPayloadText(event, "stage");
+  if (!stage) {
+    return null;
+  }
+  return {
+    turnId: event.turnId ?? null,
+    stage,
+    source: readPayloadText(event, "source") || "unknown",
+    asrResponseLatencyMs: readPayloadOptionalNumber(event, "asrResponseLatencyMs"),
+    asrDurationMs: readPayloadOptionalNumber(event, "asrDurationMs"),
+    llmResponseLatencyMs: readPayloadOptionalNumber(event, "llmResponseLatencyMs"),
+    llmDurationMs: readPayloadOptionalNumber(event, "llmDurationMs"),
+    ttsResponseLatencyMs: readPayloadOptionalNumber(event, "ttsResponseLatencyMs"),
+    ttsDurationMs: readPayloadOptionalNumber(event, "ttsDurationMs"),
+    speechEndToLlmFirstTokenMs: readPayloadOptionalNumber(event, "speechEndToLlmFirstTokenMs"),
+    speechEndToTtsFirstChunkMs: readPayloadOptionalNumber(event, "speechEndToTtsFirstChunkMs"),
+    timestamp: typeof event.timestamp === "string" ? event.timestamp : null,
+  };
+}
+
+/** 把 turn_metrics 转换为联调时易读的一行摘要。 */
+function formatTurnMetricsSummary(event: AgentEventEnvelope) {
+  const source = readPayloadText(event, "source") || "unknown";
+  const segments = [
+    formatMetricSegment("ASR", readPayloadOptionalNumber(event, "asrResponseLatencyMs"), readPayloadOptionalNumber(event, "asrDurationMs")),
+    formatMetricSegment("LLM", readPayloadOptionalNumber(event, "llmResponseLatencyMs"), readPayloadOptionalNumber(event, "llmDurationMs")),
+    formatMetricSegment("TTS", readPayloadOptionalNumber(event, "ttsResponseLatencyMs"), readPayloadOptionalNumber(event, "ttsDurationMs")),
+  ].filter((segment): segment is string => Boolean(segment));
+  const speechToLlm = readPayloadOptionalNumber(event, "speechEndToLlmFirstTokenMs");
+  const speechToTts = readPayloadOptionalNumber(event, "speechEndToTtsFirstChunkMs");
+  if (segments.length === 0 && speechToLlm == null && speechToTts == null) {
+    return "";
+  }
+  const extras = [
+    speechToLlm == null ? null : `说完话到 LLM 首字 ${speechToLlm}ms`,
+    speechToTts == null ? null : `说完话到 TTS 首包 ${speechToTts}ms`,
+  ].filter((segment): segment is string => Boolean(segment));
+  return `本轮指标（${source}）：${[...segments, ...extras].join("，")}`;
+}
+
+/** 把单个阶段的响应耗时和总耗时格式化成简短文案。 */
+function formatMetricSegment(name: string, responseLatencyMs: number | null, durationMs: number | null) {
+  if (responseLatencyMs == null && durationMs == null) {
+    return null;
+  }
+  const parts = [
+    responseLatencyMs == null ? null : `响应 ${responseLatencyMs}ms`,
+    durationMs == null ? null : `耗时 ${durationMs}ms`,
+  ].filter((segment): segment is string => Boolean(segment));
+  return `${name} ${parts.join(" / ")}`;
+}
+
+/** 指标面板属性。 */
+interface TurnMetricsPanelProps {
+  /** 当前会话最近一次完成轮次的指标。 */
+  metrics: TurnMetricsView | null;
+}
+
+/** 固定展示当前会话最近一次有效轮次的耗时指标。 */
+function TurnMetricsPanel({ metrics }: TurnMetricsPanelProps) {
+  const cards = [
+    {
+      title: "ASR",
+      responseLabel: "响应",
+      responseValue: metrics?.asrResponseLatencyMs ?? null,
+      durationLabel: "耗时",
+      durationValue: metrics?.asrDurationMs ?? null,
+    },
+    {
+      title: "LLM",
+      responseLabel: "首字",
+      responseValue: metrics?.llmResponseLatencyMs ?? null,
+      durationLabel: "耗时",
+      durationValue: metrics?.llmDurationMs ?? null,
+    },
+    {
+      title: "TTS",
+      responseLabel: "首包",
+      responseValue: metrics?.ttsResponseLatencyMs ?? null,
+      durationLabel: "耗时",
+      durationValue: metrics?.ttsDurationMs ?? null,
+    },
+    {
+      title: "说完话后",
+      responseLabel: "到 LLM 首字",
+      responseValue: metrics?.speechEndToLlmFirstTokenMs ?? null,
+      durationLabel: "到 TTS 首包",
+      durationValue: metrics?.speechEndToTtsFirstChunkMs ?? null,
+    },
+  ];
+
+  return (
+    <section className="rounded-[1.6rem] border border-primary/12 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.14),transparent_38%),linear-gradient(135deg,hsl(var(--background)),hsl(var(--secondary)/0.45))] px-4 py-4 shadow-[0_18px_42px_hsl(var(--foreground)/0.06)] md:px-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary/80">Latency Panel</p>
+          <h2 className="mt-1 text-base font-semibold md:text-lg">当前会话指标</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {metrics
+              ? `来源 ${metrics.source} · 阶段 ${metrics.stage}${metrics.turnId ? ` · turn ${metrics.turnId}` : ""}`
+              : "完成一轮对话后，这里会显示最近一次 turn 的链路时延。"}
+          </p>
+        </div>
+        {metrics?.timestamp ? <p className="text-xs text-muted-foreground">更新时间 {formatMetricsTimestamp(metrics.timestamp)}</p> : null}
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <div key={card.title} className="rounded-2xl border border-border/70 bg-background/78 p-4 backdrop-blur-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.title}</p>
+            <div className="mt-3 space-y-3">
+              <MetricsValue label={card.responseLabel} value={card.responseValue} />
+              <MetricsValue label={card.durationLabel} value={card.durationValue} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 单个指标值展示块。 */
+interface MetricsValueProps {
+  /** 指标名。 */
+  label: string;
+  /** 指标毫秒值。 */
+  value: number | null;
+}
+
+/** 用更醒目的方式展示一项耗时。 */
+function MetricsValue({ label, value }: MetricsValueProps) {
+  return (
+    <div className="flex items-end justify-between gap-3">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-right text-xl font-semibold tabular-nums tracking-tight">
+        {value == null ? <span className="text-base text-muted-foreground">--</span> : `${value}ms`}
+      </span>
+    </div>
+  );
 }
 
 /** 将 rtc_state_changed 转换为适合侧栏展示的简短调试文案。 */

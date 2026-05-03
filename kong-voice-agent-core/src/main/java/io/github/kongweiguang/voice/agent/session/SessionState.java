@@ -71,6 +71,11 @@ public class SessionState {
     private final TurnManager turnManager;
 
     /**
+     * 当前活跃 turn 的阶段耗时采集器。
+     */
+    private final TurnMetrics turnMetrics = new TurnMetrics();
+
+    /**
      * 已失效 turn 集合，用于异步回调发布前的过期判断。
      */
     private final Set<String> invalidTurns = ConcurrentHashMap.newKeySet();
@@ -205,6 +210,7 @@ public class SessionState {
             lastEouPrediction = null;
             interrupted = false;
             currentTurnId.set(next);
+            turnMetrics.reset(next);
             return next;
         } finally {
             turnLock.unlock();
@@ -242,6 +248,7 @@ public class SessionState {
         lifecycleState = TurnLifecycleState.IDLE;
         agentSpeaking = false;
         interrupted = false;
+        turnMetrics.clear();
         rtcMediaActive = false;
         transportKind = SessionTransportKind.WS_PCM;
         controlWebSocketSession = null;

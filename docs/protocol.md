@@ -291,9 +291,54 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-`audioBase64` 当前只承载 TTS 服务返回的原始字节，不额外携带格式元数据。应用默认调用 OpenAI TTS，并透传返回音频字节，React UI 会优先尝试浏览器解码播放；如果业务把 TTS 返回格式改成裸 PCM，前端可再按自身约定 fallback。跨 turn 播放仍必须按 `turnId` 相等性过滤。
+`audioBase64` 当前只承载 TTS 服务返回的原始字节，不额外携带格式元数据。应用默认调用 Qwen TTS Realtime，并透传 `response.audio.delta` Base64 分片解码后的音频字节，React UI 会优先尝试浏览器解码播放；如果业务把 TTS 返回格式改成裸 PCM，前端可再按自身约定 fallback。跨 turn 播放仍必须按 `turnId` 相等性过滤。
 
-### 7. `playback_stop`
+### 7. `turn_metrics`
+
+服务端会在当前 turn 的关键阶段下发耗时快照，便于联调时直接观察 ASR / LLM / TTS 的响应时间、总耗时，以及“用户说完话”到首字、首包音频的时延。`payload.stage` 常见值为：
+
+- `asr_final`：当前 turn 已经拿到最终用户文本。
+- `llm_first_chunk` / `llm_completed`：LLM 已输出首个非空文本片段 / 当前轮 LLM 已完成。
+- `tts_first_chunk` / `tts_completed`：TTS 已输出首个音频块 / 当前轮 TTS 已完成。
+
+```json
+{
+  "type": "turn_metrics",
+  "sessionId": "sess_001",
+  "turnId": "739251562187575296",
+  "timestamp": "2026-05-03T09:30:00Z",
+  "payload": {
+    "stage": "tts_completed",
+    "source": "audio",
+    "asrResponseLatencyMs": 118,
+    "asrDurationMs": 642,
+    "llmResponseLatencyMs": 86,
+    "llmDurationMs": 531,
+    "ttsResponseLatencyMs": 74,
+    "ttsDurationMs": 408,
+    "speechEndToLlmFirstTokenMs": 93,
+    "speechEndToTtsFirstChunkMs": 167
+  }
+}
+```
+
+音频 turn 中：
+
+- `asrResponseLatencyMs`：从首个音频块进入流水线，到收到首个 ASR partial 或 final。
+- `asrDurationMs`：从首个音频块进入流水线，到输出 `asr_final`。
+
+所有 turn 中：
+
+- `llmResponseLatencyMs`：从启动 LLM，到收到首个非空 `agent_text_chunk`。
+- `llmDurationMs`：从启动 LLM，到收到最后一个完成片段。
+- `ttsResponseLatencyMs`：从首次提交 TTS 合成，到收到首个 `tts_audio_chunk`。
+- `ttsDurationMs`：从首次提交 TTS 合成，到收到最后一个 `tts_audio_chunk`。
+- `speechEndToLlmFirstTokenMs`：从本轮 `turn committed` / `asr_final` 边界，到 LLM 输出首字。
+- `speechEndToTtsFirstChunkMs`：从本轮 `turn committed` / `asr_final` 边界，到 TTS 输出首包音频。
+
+文本输入 turn 不经过真实 ASR，相关 `asr*` 字段会缺省。
+
+### 8. `playback_stop`
 
 ```json
 {
@@ -307,7 +352,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 8. `turn_interrupted`
+### 9. `turn_interrupted`
 
 ```json
 {
@@ -321,7 +366,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 9. `error`
+### 10. `error`
 
 ```json
 {
@@ -336,7 +381,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 10. `pong`
+### 11. `pong`
 
 ```json
 {
@@ -350,7 +395,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 11. `rtc_start`
+### 12. `rtc_start`
 
 为当前控制面会话开启 RTC 媒体链路，并返回建链需要的 ICE server 列表：
 
@@ -380,7 +425,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 12. `rtc_offer`
+### 13. `rtc_offer`
 
 浏览器提交 SDP offer；服务端会异步返回 `rtc_answer`：
 
@@ -408,7 +453,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 13. `rtc_ice_candidate`
+### 14. `rtc_ice_candidate`
 
 服务端在 WebRTC 模式下通过控制面 WebSocket 下发新的 trickle ICE candidate，前端应将其追加到当前 `RTCPeerConnection`。
 
@@ -426,7 +471,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 }
 ```
 
-### 14. `rtc_close`
+### 15. `rtc_close`
 
 主动关闭当前控制面会话挂载的 RTC 运行态：
 
@@ -438,7 +483,7 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
   }
 }
 
-### 15. `rtc_state_changed`
+### 16. `rtc_state_changed`
 
 服务端在 WebRTC 会话生命周期内，会把关键运行态通过控制面 WebSocket 下发给前端，便于联调时判断问题卡在 signaling、ICE、媒体入站还是显式关闭：
 
@@ -494,37 +539,40 @@ public class CustomEventWsTextMessageHandler implements WsTextMessageHandler {
 
 ## 运行时规则
 
-1. `partial transcript` 只能推进状态，不能触发 LLM；当前默认 OpenAI 同步适配器不生成假 partial。
+1. `partial transcript` 只能推进状态，不能触发 LLM；Qwen ASR Realtime 可下发真实 partial，但只有最终 `asr_final` 能提交用户 turn。
 2. 音频输入下，VAD 发现静音候选后可以通过 EOU 判断是否提交；EOU 只影响提交时机，不改变消息结构。
 3. `turn committed` 是 LLM 启动边界。
 4. TTS 只能消费当前有效 `turnId`，服务端通过字符串相等性隔离当前 turn。
 5. 用户重新开口时，旧 turn 必须立即失效。
-6. 当前默认扩展对接 OpenAI ASR 和 TTS，API Key 缺失、服务不可用或返回空音频时明确失败，不回退到假转写或假音频。
+6. 当前默认扩展对接 Qwen ASR Realtime 和 Qwen TTS；可选 OpenAI ASR 扩展仍可通过 Spring Bean 或依赖组合替换。API Key 缺失、服务不可用或返回空音频时明确失败，不回退到假转写或假音频。
 7. `text` 上行消息直接创建 committed turn，不经过 ASR partial 阶段，但仍必须等到该提交边界后才能启动 LLM/TTS。
 8. WebRTC 首版只迁移音频面；控制面与 signaling 都必须使用现有 WebSocket JSON 语义。
 9. `rtc_state_changed` 只用于联调、可观测性和恢复辅助，不改变原有 `rtc_session_ready`、`rtc_answer`、`rtc_ice_candidate` 的协议职责。
 10. WebSocket token 只在当前进程内存中校验；服务重启、token 缺失或 token 无效时，客户端必须重新登录后再连接。
 11. 控制面重连时允许复用既有 `sessionId`，用于把新的 WebSocket 重新绑定到同一业务会话；首次建链不要求客户端预先携带该参数。
+12. `turn_metrics` 的“说完话”统计起点统一按当前 turn committed 边界计算；音频输入对应 `asr_final` 时刻，文本输入对应服务端接收并提交该文本的时刻。
 
 LLM/TTS 位于异步下游回调中，运行期失败必须转换为下行 `error` 事件，不能让异常继续冒泡到 Reactor 订阅线程。当前 TTS 合成失败使用 `code=tts_failed`，LLM 启动或同步调用失败使用 `code=llm_failed`；客户端收到这类错误后应结束当前 turn 的思考或播放状态，并等待用户重新输入。
 
-LLM 文本可以继续按 token 或短片段流式下发 `agent_text_chunk`。当前流水线会把每个非空 LLM 文本片段提交给 TTS；默认 OpenAI TTS 适配器会按 turnId 累计文本，遇到句子边界或最后一个 chunk 后再启动合成，每句通常只下发一个音频块。
+LLM 文本可以继续按 token 或短片段流式下发 `agent_text_chunk`。当前流水线会把每个非空 LLM 文本片段提交给 TTS；默认 Qwen TTS Realtime 适配器会按 turnId 累计文本，遇到句子边界或最后一个 chunk 后再启动合成，一次合成可能通过多个 `response.audio.delta` 下发多个音频块。
 
-## OpenAI 验证流程
+## Qwen ASR / Qwen TTS 验证流程
 
-默认 ASR / TTS 使用 OpenAI Audio API 配置，底层请求与 JSON 处理复用 `kong-http`。启动应用前先配置：
+默认 ASR 使用 DashScope Java SDK 连接阿里云百炼 Qwen-ASR-Realtime，默认 TTS 使用 DashScope Java SDK 连接 Qwen-TTS-Realtime。启动应用前先配置：
 
 ```bash
-export OPENAI_API_KEY=sk-xxxx
+export DASHSCOPE_API_KEY=sk-xxxx
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:OPENAI_API_KEY="sk-xxxx"
+$env:DASHSCOPE_API_KEY="sk-xxxx"
 ```
 
-默认示例配置会访问 `https://api.openai.com/v1/audio/transcriptions` 和 `https://api.openai.com/v1/audio/speech`。如果需要切换模型、端点或音色，修改 `kong-voice-agent.asr.openai.*` 和 `kong-voice-agent.tts.openai.*`。
+默认示例配置会访问 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`。如果需要切换模型、地域端点或音色，修改 `kong-voice-agent.asr.qwen.*` 和 `kong-voice-agent.tts.qwen.*`。
+
+如果业务模块启用 `kong-voice-extension-asr-qwen`，Qwen ASR 会为每个音频 turn 建立 DashScope SDK 实时识别会话，音频分片通过 `appendAudio` 追加，turn commit 时默认调用 `commit()` 和 `endSession()` 等待最终稿；返回结果仍按本协议下发 `asr_partial` / `asr_final`，不新增客户端消息字段。首个语音 turn 创建时，服务端会把预滚音频窗口一并送入 ASR，避免 VAD 确认说话的延迟截掉短句开头。当前接入 DashScope Java SDK 2.22.17 时，手动提交模式会显式把 `turn_detection` 下发为 `null`，避免 SDK 默认 `server_vad` 提前结束会话。若 completed 事件文本为空但此前已有 partial，实现会使用最近 partial 作为最终稿；若上游在最终稿之后追加 `connection.closed(code=1000)`，实现会按正常会话关闭处理；若 SDK 清理阶段抛出 `conversation is already closed!`，实现同样按幂等关闭处理，不会把这类收尾信号当成识别失败。
 
 1. 调用 `POST /api/auth/login` 获取 token
 2. 连接 `/ws/agent?token=<login-token>`
@@ -535,6 +583,7 @@ $env:OPENAI_API_KEY="sk-xxxx"
 7. 观察 `agent_thinking`
 8. 观察 `agent_text_chunk`
 9. 观察 `tts_audio_chunk`
+10. 观察 `turn_metrics`
 10. 在 agent speaking 时发送第二轮 `audio_chunk` 或 `interrupt`
 11. 观察 `playback_stop` 和 `turn_interrupted`
 
@@ -548,6 +597,7 @@ $env:OPENAI_API_KEY="sk-xxxx"
 6. 观察 `agent_thinking`
 7. 观察 `agent_text_chunk`
 8. 观察 `tts_audio_chunk`
+9. 观察 `turn_metrics`
 
 ## 前端联调界面
 

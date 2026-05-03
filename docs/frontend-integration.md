@@ -2,7 +2,7 @@
 
 这份文档面向 Web 前端联调，说明如何连接 voice agent 后端、发送文本或音频、处理下行事件，以及如何使用 `ui/` React 界面做手工验证。
 
-仓库根目录的 `ui/` 已提供新的 React 对话界面，使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm。该界面参考豆包聊天页采用产品化 AI 对话布局：左侧为轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧为聚焦聊天区，首屏展示欢迎态和示例问题，底部固定输入框使用同一个主按钮支持文本发送和打断，空闲时显示发送，发送后立即切换为打断；顶部可切换 `WS PCM` 与 `WebRTC` 传输模式。切换模式时，前端会同步更新当前会话的传输模式、关闭旧的音频运行态，并在当前会话已经在线时按新模式自动重连，避免麦克风按钮命中错误的采集分支。`WS PCM` 模式下，输入框左侧麦克风按钮会采集浏览器音频、重采样为 16kHz 单声道 PCM16 后通过 WebSocket 二进制帧发送，停止录音时自动发送 `audio_end`；`WebRTC` 模式下，页面会先创建 RTC 会话、再通过 `RTCPeerConnection` 发送麦克风音轨，按钮只负责静音/恢复本地音轨，并在静音时发送一次 `audio_end`。收到 `tts_audio_chunk` 后会按 `turnId` 入队播放，并在对应助手文字区域展示播报动效；WebRTC 模式下同时会消费远端 RTC 音轨作为主播放链路。React UI 中一个前端对话对应一个后端 session；点击“新对话”会创建新的前端会话，已有在线会话不会被关闭，切换会话时会复用仍在线的连接。会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 会保存到浏览器 `localStorage`，刷新页面后可回看本地历史。控制面重新连接时，前端会优先把本地保存的 `sessionId` 带回 WebSocket 握手 query，恢复到原后端会话；RTC 媒体面进入 `disconnected` 或 `failed` 后，界面会按退避策略自动尝试最多 3 次恢复当前 RTC 链路。当前版本新增消费后端 `rtc_state_changed`，会把建链、收轨、首包音频、断流、失败和关闭这些关键节点映射到连接错误、麦克风状态和播放状态提示里。
+仓库根目录的 `ui/` 已提供新的 React 对话界面，使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm。该界面参考豆包聊天页采用产品化 AI 对话布局：左侧为轻量会话栏，包含新对话、历史摘要、连接状态和账号入口；右侧为聚焦聊天区，首屏展示欢迎态和示例问题，底部固定输入框使用同一个主按钮支持文本发送和打断，空闲时显示发送，发送后立即切换为打断；顶部可切换 `WS PCM` 与 `WebRTC` 传输模式。切换模式时，前端会同步更新当前会话的传输模式、关闭旧的音频运行态，并在当前会话已经在线时按新模式自动重连，避免麦克风按钮命中错误的采集分支。`WS PCM` 模式下，输入框左侧麦克风按钮会采集浏览器音频、重采样为 16kHz 单声道 PCM16 后通过 WebSocket 二进制帧发送，停止录音时自动发送 `audio_end`；如果后端已经通过 `state_changed(USER_TURN_COMMITTED / AGENT_THINKING / AGENT_SPEAKING)` 判定本轮语音完成，前端也会立即停止本地采集，避免继续上传已失效音频。`WebRTC` 模式下，页面会先创建 RTC 会话、再通过 `RTCPeerConnection` 发送麦克风音轨，按钮只负责静音/恢复本地音轨，并在静音时发送一次 `audio_end`。收到 `tts_audio_chunk` 后会按 `turnId` 入队播放，并在对应助手文字区域展示播报动效；WebRTC 模式下同时会消费远端 RTC 音轨作为主播放链路。当前版本会在聊天区顶部固定展示一个指标面板，并在每轮结束后用最近一次 `turn_metrics` 刷新面板内容，直接展示 ASR / LLM / TTS 响应耗时、总耗时，以及“说完话到 LLM 首字 / TTS 首包”的时延；聊天流里的系统摘要仍会保留，方便回看。React UI 中一个前端对话对应一个后端 session；点击“新对话”会创建新的前端会话，已有在线会话不会被关闭，切换会话时会复用仍在线的连接。会话列表、当前选中会话、消息快照、`sessionId`、最近 `turnId` 和最近一次指标面板快照会保存到浏览器 `localStorage`，刷新页面后可回看本地历史。控制面重新连接时，前端会优先把本地保存的 `sessionId` 带回 WebSocket 握手 query，恢复到原后端会话；RTC 媒体面进入 `disconnected` 或 `failed` 后，界面会按退避策略自动尝试最多 3 次恢复当前 RTC 链路。当前版本新增消费后端 `rtc_state_changed`，会把建链、收轨、首包音频、断流、失败和关闭这些关键节点映射到连接错误、麦克风状态和播放状态提示里。
 
 ## 接入信息
 
@@ -55,7 +55,7 @@ pnpm dev
 8. 点击“新对话”后应看到新的后端 session 建立，旧会话连接保持在线。
 9. 刷新浏览器页面，确认左侧仍能看到本地保存的历史会话和消息快照。
 
-后端默认会把音频 turn 的 final 阶段提交到 OpenAI ASR，并把 Agent 文本提交到 OpenAI TTS。启动应用前需要设置 `OPENAI_API_KEY` 或 `KONG_VOICE_AGENT_OPENAI_API_KEY`。服务不可用、API Key 缺失或返回空音频时会明确失败，不再回退到假数据；TTS 失败会下发 `error(code=tts_failed)`，前端应结束当前 turn 的思考或播放状态。
+后端默认会把音频 turn 提交到 Qwen ASR Realtime，并把 Agent 文本提交到 Qwen TTS。启动应用前需要设置 `DASHSCOPE_API_KEY` 或 `KONG_VOICE_AGENT_QWEN_API_KEY`。前端仍然只消费相同的 `asr_partial` / `asr_final` 协议；服务不可用、API Key 缺失或返回空音频时会明确失败，不再回退到假数据；TTS 失败会下发 `error(code=tts_failed)`，前端应结束当前 turn 的思考或播放状态。
 
 ### React UI 验证
 
@@ -80,7 +80,7 @@ VITE_AGENT_HTTP_BASE=http://localhost:9877
 VITE_AGENT_WS_BASE=ws://localhost:9877
 ```
 
-如果后端端口或域名不同，复制为 `ui/.env.local` 后修改。当前 React UI 已实现固定账号登录、`WS PCM / WebRTC` 传输模式切换、WebSocket 控制面连接、`ping`、`text`、`interrupt`、麦克风 PCM 二进制上传、RTC signaling、停止录音自动 `audio_end`、`asr_final` 用户气泡、`agent_thinking`、`agent_text_chunk` 聚合显示、`tts_audio_chunk` 播放队列和播报动效，并按 `turnId` 更新当前会话；“新对话”会建立新的后端 session，同时保留其他会话已建立的连接。历史会话只作为浏览器本地快照存储在 `localStorage`，切换历史项时如果对应连接仍在线会继续复用。
+如果后端端口或域名不同，复制为 `ui/.env.local` 后修改。当前 React UI 已实现固定账号登录、`WS PCM / WebRTC` 传输模式切换、WebSocket 控制面连接、`ping`、`text`、`interrupt`、麦克风 PCM 二进制上传、RTC signaling、停止录音自动 `audio_end`、`asr_final` 用户气泡、`agent_thinking`、`agent_text_chunk` 聚合显示、`tts_audio_chunk` 播放队列和播报动效、`turn_metrics` 摘要展示，以及聊天区顶部固定指标面板，并按 `turnId` 更新当前会话；“新对话”会建立新的后端 session，同时保留其他会话已建立的连接。历史会话只作为浏览器本地快照存储在 `localStorage`，切换历史项时如果对应连接仍在线会继续复用。
 
 ## 上行消息
 
@@ -211,7 +211,7 @@ await peerConnection.setRemoteDescription(answer);
 
 麦克风输入需要转换为服务端 `kong-voice-agent.audio` 配置的 PCM 格式，并通过 WebSocket 二进制消息发送。默认配置是 16kHz 单声道 PCM16 little-endian。
 
-服务端启用 EOU 后，短暂停顿不一定立即产生 `asr_final`：VAD 会先进入静音候选，EOU 可结合流式 ASR partial 文本判断用户是否真的说完。当前默认 OpenAI 同步适配器不生成假 `asr_partial`，前端应兼容只收到 `state_changed` 和 `asr_final` 的流程；调试时可关注 `state_changed.payload.reason` 中的 `eou_detected`、`eou_waiting`、`eou_max_silence_fallback` 和 `eou_unavailable_fallback`。
+服务端启用 EOU 后，短暂停顿不一定立即产生 `asr_final`：VAD 会先进入静音候选，EOU 可结合流式 ASR partial 文本判断用户是否真的说完。Qwen ASR Realtime 可产生真实 `asr_partial`，但前端仍应兼容只收到 `state_changed` 和 `asr_final` 的流程；后端在首个语音 turn 创建时会把预滚音频一并送入 ASR，降低短句开头被 VAD 延迟截断后产生空转写的概率。当收到 `USER_TURN_COMMITTED`、`AGENT_THINKING` 或 `AGENT_SPEAKING` 时，`WS PCM` 模式前端应停止继续上传当前轮的麦克风音频。调试时可关注 `state_changed.payload.reason` 中的 `eou_detected`、`eou_waiting`、`eou_max_silence_fallback` 和 `eou_unavailable_fallback`。
 
 ```js
 socket.send(pcmArrayBuffer);
@@ -250,11 +250,12 @@ socket.send(pcmArrayBuffer);
 | `agent_thinking` | Agent 开始生成 | 展示思考中状态 |
 | `agent_text_chunk` | Agent 文本片段 | 按 `seq` 追加到当前 Agent 气泡 |
 | `tts_audio_chunk` | Agent 音频片段 | 按 `seq` 播放或排队；mock 音频仅用于链路验证 |
+| `turn_metrics` | 当前 turn 的阶段耗时指标 | 适合展示调试摘要，或写入埋点 / 联调日志 |
 | `rtc_ice_candidate` | WebRTC trickle ICE candidate | 只在 `WebRTC` 模式消费，追加到当前 `RTCPeerConnection` |
 | `rtc_state_changed` | WebRTC 运行态变化 | 更新连接错误、麦克风状态、播放状态和恢复调试提示 |
 | `playback_stop` | 停止旧播报 | 清空当前播放队列 |
 | `turn_interrupted` | 旧 turn 被打断 | 标记旧 turn 失效 |
-| `error` | 协议或运行错误 | 展示错误并写入日志；`tts_failed` 表示 OpenAI TTS 或自定义 TTS 服务不可用、鉴权失败或返回空音频 |
+| `error` | 协议或运行错误 | 展示错误并写入日志；`tts_failed` 表示 Qwen TTS 或自定义 TTS 服务不可用、鉴权失败或返回空音频 |
 | `pong` | 心跳响应 | 更新连接延迟或在线状态 |
 
 ## turnId 处理规则
@@ -268,9 +269,9 @@ socket.send(pcmArrayBuffer);
 
 ## TTS 播放建议
 
-`tts_audio_chunk.payload.audioBase64` 是后端 TTS 返回字节的 base64 编码。当前应用默认调用 OpenAI TTS，联调台会优先尝试 `AudioContext.decodeAudioData`；如果后端返回裸 PCM，联调台才会按 PCM16 little-endian 和播放区采样率兜底播放。
+`tts_audio_chunk.payload.audioBase64` 是后端 TTS 返回字节的 base64 编码。当前应用默认调用 Qwen TTS Realtime，联调台会优先尝试 `AudioContext.decodeAudioData`；如果后端返回裸 PCM，联调台才会按 PCM16 little-endian 和播放区采样率兜底播放。
 
-后端流水线会把每个非空 `agent_text_chunk` 提交给 TTS。当前 OpenAI TTS 适配器会先按 turnId 累计片段，遇到句子边界或最后一个 chunk 后再合成；每句通常只产生一个音频块。因此前端应继续按 `seq` 排队播放，不要假设文本 chunk 和音频 chunk 一一对应。
+后端流水线会把每个非空 `agent_text_chunk` 提交给 TTS。当前 Qwen TTS Realtime 适配器会先按 turnId 累计片段，遇到句子边界或最后一个 chunk 后再合成；一次合成可能通过多个 `response.audio.delta` 产生多个音频块。因此前端应继续按 `seq` 排队播放，不要假设文本 chunk 和音频 chunk 一一对应。
 
 前端播放逻辑需要遵守：
 
@@ -313,6 +314,12 @@ interface AgentEventEnvelope<T = Record<string, unknown>> {
 - `audioQueue`：当前 turn 的 TTS 音频队列。
 
 `ui/` 的 React 实现当前使用组件级 `useState` 管理登录态、按前端会话隔离的连接态、当前 `sessionId`、当前 `turnId`、消息列表和历史摘要，不引入全局状态库。一个前端对话对应一个后端 session；浏览器本地通过 `localStorage` 保存历史会话快照，key 为 `kong-voice-agent.conversations.v1` 和 `kong-voice-agent.active-conversation.v1`。当前实现已额外维护 `transportKind = "ws-pcm" | "webrtc"` 与每会话独立的 RTC 运行态；`webrtc` 模式下，会话仍保留控制面 WebSocket，但 TTS 主播放链路改为远端 RTC 音轨。后续如果接入真实服务端会话列表，应继续保持按 `sessionId` 和 `turnId` 隔离 UI 更新，并在切换会话时复用仍在线的连接或为离线会话重新连接。
+
+`turn_metrics` 建议使用方式：
+
+- `payload.stage=tts_completed` 或 `llm_completed` 时，可认为当前轮主要耗时已经收口，适合展示最终摘要。
+- `payload.source=audio` 时，`asrResponseLatencyMs` 和 `asrDurationMs` 才有值；文本输入 turn 这些字段会缺省。
+- `speechEndToLlmFirstTokenMs` 与 `speechEndToTtsFirstChunkMs` 的起点统一是当前轮 `turn committed`，音频输入近似“用户说完话”，文本输入则是服务端接收并提交文本的时刻。
 
 ## JavaScript 最小示例
 

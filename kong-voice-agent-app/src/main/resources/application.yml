@@ -11,9 +11,9 @@ logging:
     io.github.kongweiguang.voice.agent: DEBUG
 ai:
   model:
-    api-key: ${AI_API_KEY:sk-your-api-key-here}
-    base-url: http://172.16.41.254:30074/v1
-    model-name: Qwen3-32B
+    api-key: ${AI_API_KEY:xxx}
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model-name: qwen-plus
 
 kong-voice-agent:
   auth:
@@ -46,23 +46,32 @@ kong-voice-agent:
     inference-timeout-ms: 300
     language: zh
   asr:
-    openai:
-      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:sk-your-api-key-here}}
-      base-url: ${KONG_VOICE_AGENT_ASR_OPENAI_BASE_URL:https://api.openai.com/v1}
-      transcriptions-path: ${KONG_VOICE_AGENT_ASR_OPENAI_TRANSCRIPTIONS_PATH:/audio/transcriptions}
-      model: ${KONG_VOICE_AGENT_ASR_OPENAI_MODEL:gpt-4o-mini-transcribe}
-      language: ${KONG_VOICE_AGENT_ASR_OPENAI_LANGUAGE:zh}
-      timeout-ms: ${KONG_VOICE_AGENT_ASR_OPENAI_TIMEOUT_MS:15000}
+    qwen:
+      enabled: ${KONG_VOICE_AGENT_ASR_QWEN_ENABLED:true}
+      api-key: ${KONG_VOICE_AGENT_QWEN_API_KEY:${DASHSCOPE_API_KEY:xxx}}
+      url: ${KONG_VOICE_AGENT_ASR_QWEN_URL:wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      model: ${KONG_VOICE_AGENT_ASR_QWEN_MODEL:qwen3-asr-flash-realtime}
+      language: ${KONG_VOICE_AGENT_ASR_QWEN_LANGUAGE:zh}
+      input-audio-format: ${KONG_VOICE_AGENT_ASR_QWEN_INPUT_AUDIO_FORMAT:pcm}
+      enable-turn-detection: ${KONG_VOICE_AGENT_ASR_QWEN_ENABLE_TURN_DETECTION:false}
+      turn-detection-type: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_TYPE:server_vad}
+      turn-detection-threshold: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_THRESHOLD:0.0}
+      turn-detection-silence-duration-ms: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_SILENCE_DURATION_MS:400}
+      timeout-ms: ${KONG_VOICE_AGENT_ASR_QWEN_TIMEOUT_MS:30000}
   tts:
-    openai:
-      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:sk-your-api-key-here}}
-      base-url: ${KONG_VOICE_AGENT_TTS_OPENAI_BASE_URL:https://api.openai.com/v1}
-      speech-path: ${KONG_VOICE_AGENT_TTS_OPENAI_SPEECH_PATH:/audio/speech}
-      model: ${KONG_VOICE_AGENT_TTS_OPENAI_MODEL:gpt-4o-mini-tts}
-      voice: ${KONG_VOICE_AGENT_TTS_OPENAI_VOICE:alloy}
-      response-format: ${KONG_VOICE_AGENT_TTS_OPENAI_RESPONSE_FORMAT:wav}
-      instructions: ${KONG_VOICE_AGENT_TTS_OPENAI_INSTRUCTIONS:}
-      timeout-ms: ${KONG_VOICE_AGENT_TTS_OPENAI_TIMEOUT_MS:30000}
+    qwen:
+      api-key: ${KONG_VOICE_AGENT_QWEN_API_KEY:${DASHSCOPE_API_KEY:xxx}}
+      url: ${KONG_VOICE_AGENT_TTS_QWEN_URL:wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      model: ${KONG_VOICE_AGENT_TTS_QWEN_MODEL:qwen3-tts-flash-realtime}
+      voice: ${KONG_VOICE_AGENT_TTS_QWEN_VOICE:Cherry}
+      language-type: ${KONG_VOICE_AGENT_TTS_QWEN_LANGUAGE_TYPE:Chinese}
+      mode: ${KONG_VOICE_AGENT_TTS_QWEN_MODE:server_commit}
+      response-format: ${KONG_VOICE_AGENT_TTS_QWEN_RESPONSE_FORMAT:PCM_24000HZ_MONO_16BIT}
+      format: ${KONG_VOICE_AGENT_TTS_QWEN_FORMAT:pcm}
+      sample-rate: ${KONG_VOICE_AGENT_TTS_QWEN_SAMPLE_RATE:24000}
+      instructions: ${KONG_VOICE_AGENT_TTS_QWEN_INSTRUCTIONS:}
+      optimize-instructions: ${KONG_VOICE_AGENT_TTS_QWEN_OPTIMIZE_INSTRUCTIONS:false}
+      timeout-ms: ${KONG_VOICE_AGENT_TTS_QWEN_TIMEOUT_MS:30000}
   rtc:
     enabled: ${KONG_VOICE_AGENT_RTC_ENABLED:false}
     ice-servers:

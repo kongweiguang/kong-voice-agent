@@ -37,6 +37,11 @@ public enum EventType {
     tts_audio_chunk,
 
     /**
+     * 当前 turn 的阶段耗时指标。
+     */
+    turn_metrics,
+
+    /**
      * WebRTC trickle ICE candidate。
      */
     rtc_ice_candidate,

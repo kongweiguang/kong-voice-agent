@@ -13,11 +13,12 @@
 - Session 与 turn 隔离：已支持独立 `sessionId`、雪花 ID 字符串 `turnId`、旧 turn 失效和异步结果隔离。
 - 音频基础设施：已支持 `AudioFormatSpec` 配置绑定、PCM 工具、ring buffer、pre-roll 和音频标准化入口。
 - VAD：已接入 Silero VAD 扩展，模型缺失时支持 RMS fallback。
-- ASR：已接入 OpenAI ASR 扩展，当前在 turn commit 或 `audio_end` 后输出最终转写。
+- ASR：已接入 Qwen ASR Realtime 扩展和可选 OpenAI ASR 扩展，当前在 turn commit 或 `audio_end` 后输出最终转写，并可接收真实 partial。
 - EOU 与 TurnManager：已支持 VAD + EOU + endpointing 协同推进 turn committed。
 - LLM 编排：已支持 turn committed 后启动 LLM，当前应用默认使用 app 模块实现，也支持扩展模块方式接入 OpenAI LLM。
-- TTS 编排：已接入 OpenAI TTS 扩展，支持文本分段累计、音频回传和错误下行。
-- HTTP / SSE / JSON 基础能力：OpenAI ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS 和项目协议 JSON 工具已统一复用 `kong-http` 及其 JSON 门面。
+- TTS 编排：已接入 Qwen TTS Realtime 扩展和可选 OpenAI TTS 扩展，支持文本分段累计、实时音频回传和错误下行。
+- 时延观测：已支持按 turn 下发 `turn_metrics`，统计 ASR / LLM / TTS 的响应时间、总耗时，以及 turn committed 到 LLM 首字、TTS 首包的时延。
+- HTTP / Realtime / SSE / JSON 基础能力：OpenAI ASR、Qwen ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS、Qwen TTS 和项目协议 JSON 工具已统一复用 `kong-http` 与 DashScope Java SDK 提供的请求、实时 WebSocket 和 JSON 能力。
 - 打断流程：已支持客户端主动 `interrupt` 和用户说话打断播报。
 - Hook 扩展：已提供 `VoicePipelineHook`，可观察音频、文本、turn commit、LLM、TTS 和 interruption 节点。
 - React 联调界面：已提供 `ui/` 产品化聊天界面，支持固定账号登录、`WS PCM / WebRTC` 切换、多会话、本地历史和 TTS 播放。

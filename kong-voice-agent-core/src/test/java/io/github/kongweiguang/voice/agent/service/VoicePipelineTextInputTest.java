@@ -78,10 +78,20 @@ class VoicePipelineTextInputTest {
 
         List<JsonNode> events = ws.sentEvents();
         assertThat(events).extracting(node -> node.get("type").asText())
-                .containsSubsequence("state_changed", "asr_final", "agent_thinking", "agent_text_chunk", "tts_audio_chunk");
+                .containsSubsequence("state_changed", "asr_final", "turn_metrics", "agent_thinking", "agent_text_chunk", "tts_audio_chunk", "turn_metrics");
         JsonNode finalText = findEvent(events, "asr_final");
         assertThat(finalText.at("/payload/text").asText()).isEqualTo("你好");
         assertThat(finalText.at("/payload/source").asText()).isEqualTo("text");
+        JsonNode metrics = findLastEvent(events, "turn_metrics");
+        assertThat(metrics.at("/payload/source").asText()).isEqualTo("text");
+        assertThat(metrics.at("/payload/stage").asText()).isEqualTo("tts_completed");
+        assertThat(metrics.at("/payload/asrResponseLatencyMs").isMissingNode()).isTrue();
+        assertThat(metrics.at("/payload/llmResponseLatencyMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/llmDurationMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/ttsResponseLatencyMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/ttsDurationMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/speechEndToLlmFirstTokenMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/speechEndToTtsFirstChunkMs").asLong()).isGreaterThanOrEqualTo(0L);
         assertThat(session.finalTranscript()).isEqualTo("你好");
         assertThat(hook.events).containsSubsequence("text:你好", "commit:text", "before_llm", "llm_chunk", "tts_chunk");
     }
@@ -249,6 +259,13 @@ class VoicePipelineTextInputTest {
         return events.stream()
                 .filter(node -> type.equals(node.get("type").asText()))
                 .findFirst()
+                .orElseThrow();
+    }
+
+    private JsonNode findLastEvent(List<JsonNode> events, String type) {
+        return events.stream()
+                .filter(node -> type.equals(node.get("type").asText()))
+                .reduce((first, second) -> second)
                 .orElseThrow();
     }
 

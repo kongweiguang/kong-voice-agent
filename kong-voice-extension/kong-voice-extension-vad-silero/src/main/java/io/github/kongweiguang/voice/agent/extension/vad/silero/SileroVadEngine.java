@@ -2,6 +2,7 @@ package io.github.kongweiguang.voice.agent.extension.vad.silero;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OnnxValue;
+import ai.onnxruntime.TensorInfo;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 import io.github.kongweiguang.voice.agent.audio.PcmUtils;
@@ -132,8 +133,8 @@ public class SileroVadEngine implements VadEngine {
                     OnnxTensor tensor = switch (inputName) {
                         case "input" -> OnnxTensor.createTensor(environment, new float[][]{normalized});
                         case "sr" -> OnnxTensor.createTensor(environment, new long[]{16000L});
-                        case "h" -> OnnxTensor.createTensor(environment, new float[][][]{h});
-                        case "c" -> OnnxTensor.createTensor(environment, new float[][][]{c});
+                        case "h" -> OnnxTensor.createTensor(environment, buildStateTensor("h", h));
+                        case "c" -> OnnxTensor.createTensor(environment, buildStateTensor("c", c));
                         default -> null;
                     };
                     if (tensor != null) {
@@ -177,12 +178,75 @@ public class SileroVadEngine implements VadEngine {
         try {
             Object nextH = result.get(1).getValue();
             Object nextC = result.get(2).getValue();
-            if (nextH instanceof float[][][] hh && hh.length > 0 && nextC instanceof float[][][] cc && cc.length > 0) {
-                h = hh[0];
-                c = cc[0];
+            if (nextH instanceof float[][][] hh && nextC instanceof float[][][] cc) {
+                h = normalizeStateLayout(hh);
+                c = normalizeStateLayout(cc);
             }
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * 按模型声明的输入维度构造 Silero 循环状态张量，兼容 [1,2,64] 与 [2,1,64] 两种常见布局。
+     */
+    float[][][] buildStateTensor(String inputName, float[][] state) throws Exception {
+        TensorInfo info = inputTensorInfo(inputName);
+        return reshapeStateForInput(info == null ? null : info.getShape(), state);
+    }
+
+    /**
+     * 根据输入 shape 调整状态张量布局。
+     */
+    float[][][] reshapeStateForInput(long[] shape, float[][] state) {
+        if (shape == null || shape.length != 3) {
+            return new float[][][]{state};
+        }
+        if (shape[0] == 2L) {
+            float[][][] layout201 = new float[2][1][64];
+            for (int i = 0; i < 2; i++) {
+                System.arraycopy(state[i], 0, layout201[i][0], 0, Math.min(64, state[i].length));
+            }
+            return layout201;
+        }
+        return new float[][][]{state};
+    }
+
+    /**
+     * 将模型返回的循环状态统一归一为 [2][64]，便于跨窗口复用。
+     */
+    float[][] normalizeStateLayout(float[][][] rawState) {
+        float[][] normalized = new float[2][64];
+        if (rawState == null || rawState.length == 0) {
+            return normalized;
+        }
+        if (rawState.length == 1 && rawState[0].length >= 2) {
+            for (int i = 0; i < 2; i++) {
+                System.arraycopy(rawState[0][i], 0, normalized[i], 0, Math.min(64, rawState[0][i].length));
+            }
+            return normalized;
+        }
+        if (rawState.length >= 2 && rawState[0].length >= 1 && rawState[1].length >= 1) {
+            for (int i = 0; i < 2; i++) {
+                System.arraycopy(rawState[i][0], 0, normalized[i], 0, Math.min(64, rawState[i][0].length));
+            }
+            return normalized;
+        }
+        return normalized;
+    }
+
+    /**
+     * 读取模型输入的张量元信息；读取失败时回退默认布局。
+     */
+    private TensorInfo inputTensorInfo(String inputName) {
+        try {
+            Object info = session.getInputInfo().get(inputName).getInfo();
+            if (info instanceof TensorInfo tensorInfo) {
+                return tensorInfo;
+            }
+        } catch (Exception ex) {
+            log.debug("Failed to read tensor info for input {}: {}", inputName, ex.getMessage());
+        }
+        return null;
     }
 
     /**

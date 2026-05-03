@@ -3,6 +3,7 @@ package io.github.kongweiguang.voice.agent.playback;
 import io.github.kongweiguang.v1.json.Json;
 import io.github.kongweiguang.voice.agent.model.AgentEvent;
 import io.github.kongweiguang.voice.agent.session.SessionState;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -17,6 +18,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author kongweiguang
  */
 @Component
+@Slf4j
 public class PlaybackDispatcher {
     /**
      * 每个 WebSocket 连接独立的发送锁，保证异步回调不会并发写同一连接。
@@ -39,9 +41,13 @@ public class PlaybackDispatcher {
      */
     public void send(WebSocketSession webSocketSession, AgentEvent event) {
         if (webSocketSession == null) {
+            log.debug("Skip websocket event because control session is null, eventType={}, sessionId={}, turnId={}",
+                    event.type(), event.sessionId(), event.turnId());
             return;
         }
         if (!webSocketSession.isOpen()) {
+            log.debug("Skip websocket event because control session is closed, ws={}, eventType={}, sessionId={}, turnId={}",
+                    webSocketSession.getId(), event.type(), event.sessionId(), event.turnId());
             return;
         }
         try {
@@ -54,6 +60,8 @@ public class PlaybackDispatcher {
                     return;
                 }
                 // 同一连接的事件按获得发送锁的顺序写出，避免异步 LLM/TTS 回调并发写帧。
+                log.info("Send websocket event: ws={}, eventType={}, sessionId={}, turnId={}",
+                        webSocketSession.getId(), event.type(), event.sessionId(), event.turnId());
                 webSocketSession.sendMessage(new TextMessage(payload));
             } finally {
                 lock.unlock();

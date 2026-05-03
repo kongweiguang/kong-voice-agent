@@ -101,6 +101,83 @@ class VoicePipelineConcurrencyTest {
     }
 
     /**
+     * audio_end 提交必须与音频处理串行，避免流式 ASR 出现 append 与 commit 并发。
+     */
+    @Test
+    @DisplayName("audio_end 提交会等待当前音频处理完成")
+    void serializesAudioEndCommitWithAudioProcessing() throws Exception {
+        BlockingVadEngine vadEngine = new BlockingVadEngine();
+        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
+        try (ExecutorService audioExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
+             ExecutorService commitExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory())) {
+            VoicePipelineService service = new VoicePipelineService(
+                    vadEngine,
+                    new NoopEouDetector(),
+                    eouConfig(),
+                    this::replyOnce,
+                    this::ttsEcho,
+                    dispatcher,
+                    new InterruptionManager(dispatcher),
+                    new SessionAudioPlaybackPolicy(),
+                    sessionManager(),
+                    audioExecutor,
+                    directExecutor(),
+                    List.of()
+            );
+            SessionState session = TestSessionStates.create("s1");
+            session.nextTurnId();
+            CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+            service.acceptAudio(session, ws, new byte[]{1, 2});
+            assertThat(vadEngine.firstCallEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            CountDownLatch commitReturned = new CountDownLatch(1);
+            commitExecutor.submit(() -> {
+                service.commitAudioEnd(session, ws);
+                commitReturned.countDown();
+            });
+            Thread.sleep(150L);
+            assertThat(commitReturned.getCount()).isEqualTo(1L);
+
+            vadEngine.allowFirstCallToFinish.countDown();
+
+            assertThat(commitReturned.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    /**
+     * 已经完成 ASR 提交的 turn 再收到 audio_end 时应直接忽略，避免重复提交同一轮。
+     */
+    @Test
+    @DisplayName("已提交 turn 的重复 audio_end 会被忽略")
+    void ignoresAudioEndAfterAsrAlreadyCommitted() throws Exception {
+        PlaybackDispatcher dispatcher = new PlaybackDispatcher();
+        VoicePipelineService service = new VoicePipelineService(
+                new SilentVadEngine(),
+                new NoopEouDetector(),
+                eouConfig(),
+                this::replyOnce,
+                this::ttsEcho,
+                dispatcher,
+                new InterruptionManager(dispatcher),
+                new SessionAudioPlaybackPolicy(),
+                sessionManager(),
+                directExecutor(),
+                directExecutor(),
+                List.of()
+        );
+        SessionState session = TestSessionStates.create("s1");
+        String turnId = session.nextTurnId();
+        session.activeAsrTurnId(null);
+        CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+        service.commitAudioEnd(session, ws);
+
+        assertThat(filterEvents(ws.sentEvents(), "asr_final")).isEmpty();
+        assertThat(session.currentTurnId()).isEqualTo(turnId);
+    }
+
+    /**
      * 旧 turn 的异步 LLM/TTS 回调在并发切换到新 turn 后必须被丢弃，避免污染当前会话。
      */
     @Test

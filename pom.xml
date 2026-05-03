@@ -56,6 +56,11 @@
             </dependency>
             <dependency>
                 <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-asr-qwen</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
                 <artifactId>kong-voice-extension-llm-openai</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -72,6 +77,11 @@
             <dependency>
                 <groupId>io.github.kongweiguang</groupId>
                 <artifactId>kong-voice-extension-tts-openai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.kongweiguang</groupId>
+                <artifactId>kong-voice-extension-tts-qwen</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

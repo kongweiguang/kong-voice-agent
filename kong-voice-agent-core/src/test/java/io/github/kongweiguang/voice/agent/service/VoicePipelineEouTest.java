@@ -5,6 +5,7 @@ import io.github.kongweiguang.voice.agent.asr.AsrUpdate;
 import io.github.kongweiguang.voice.agent.asr.StreamingAsrAdapter;
 import io.github.kongweiguang.voice.agent.audio.AudioFormatSpec;
 import io.github.kongweiguang.voice.agent.eou.EouConfig;
+import io.github.kongweiguang.voice.agent.eou.EouDetector;
 import io.github.kongweiguang.voice.agent.eou.EouPrediction;
 import io.github.kongweiguang.voice.agent.hook.VoicePipelineHook;
 import io.github.kongweiguang.voice.agent.llm.LlmChunk;
@@ -39,6 +40,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,21 +85,60 @@ class VoicePipelineEouTest {
 
         assertThat(llmCalls).hasValue(1);
         assertThat(ws.sentEvents()).extracting(node -> node.get("type").asText())
-                .containsSubsequence("asr_final", "agent_thinking", "agent_text_chunk", "tts_audio_chunk");
+                .containsSubsequence("asr_final", "turn_metrics", "agent_thinking", "agent_text_chunk", "tts_audio_chunk", "turn_metrics");
+        JsonNode metrics = ws.sentEvents().stream()
+                .filter(node -> "turn_metrics".equals(node.get("type").asText()))
+                .reduce((first, second) -> second)
+                .orElseThrow();
+        assertThat(metrics.at("/payload/source").asText()).isEqualTo("audio");
+        assertThat(metrics.at("/payload/stage").asText()).isEqualTo("tts_completed");
+        assertThat(metrics.at("/payload/asrResponseLatencyMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/asrDurationMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/llmResponseLatencyMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/ttsResponseLatencyMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/speechEndToLlmFirstTokenMs").asLong()).isGreaterThanOrEqualTo(0L);
+        assertThat(metrics.at("/payload/speechEndToTtsFirstChunkMs").asLong()).isGreaterThanOrEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("首个语音 turn 会把预滚音频一起送入 ASR")
+    void sendsPreRollAudioWhenSpeechStarts() {
+        AtomicReference<byte[]> acceptedPcm = new AtomicReference<>();
+        VoicePipelineService service = serviceWith(
+                new SequencedVadEngine(false, true),
+                ignored -> EouPrediction.waiting(0.2, 0.5, true),
+                new CapturingAsrAdapter(acceptedPcm),
+                new AtomicInteger()
+        );
+        SessionState session = new SessionState("s1", AudioFormatSpec.DEFAULT,
+                (sessionId, format) -> new CapturingAsrAdapter(acceptedPcm), eouConfig());
+        CapturingWebSocketSession ws = new CapturingWebSocketSession();
+
+        service.acceptAudio(session, ws, new byte[] {1, 2});
+        service.acceptAudio(session, ws, new byte[] {3, 4});
+
+        assertThat(acceptedPcm.get()).containsExactly(1, 2, 3, 4);
     }
 
     private VoicePipelineService serviceWith(EouPrediction prediction, AtomicInteger llmCalls) {
+        return serviceWith(new SequencedVadEngine(), ignored -> prediction, new PartialAsrAdapter(), llmCalls);
+    }
+
+    private VoicePipelineService serviceWith(VadEngine vadEngine,
+                                             EouDetector eouDetector,
+                                             StreamingAsrAdapter asrAdapter,
+                                             AtomicInteger llmCalls) {
         PlaybackDispatcher dispatcher = new PlaybackDispatcher();
         return new VoicePipelineService(
-                new SequencedVadEngine(),
-                ignored -> prediction,
+                vadEngine,
+                eouDetector,
                 eouConfig(),
                 (request, consumer) -> replyOnce(request, consumer, llmCalls),
                 (turnId, startSeq, text, lastTextChunk) -> List.of(new TtsChunk(turnId, startSeq, lastTextChunk, text.getBytes(StandardCharsets.UTF_8), text)),
                 dispatcher,
                 new InterruptionManager(dispatcher),
                 new SessionAudioPlaybackPolicy(),
-                sessionManager(),
+                sessionManager(asrAdapter),
                 directExecutor(),
                 directExecutor(),
                 List.<VoicePipelineHook>of()
@@ -122,7 +163,11 @@ class VoicePipelineEouTest {
     }
 
     private SessionManager sessionManager() {
-        return new SessionManager((sessionId, format) -> new PartialAsrAdapter(),
+        return sessionManager(new PartialAsrAdapter());
+    }
+
+    private SessionManager sessionManager(StreamingAsrAdapter asrAdapter) {
+        return new SessionManager((sessionId, format) -> asrAdapter,
                 AudioFormatSpec.DEFAULT,
                 eouConfig());
     }
@@ -136,10 +181,26 @@ class VoicePipelineEouTest {
      */
     private static final class SequencedVadEngine implements VadEngine {
         private final AtomicInteger calls = new AtomicInteger();
+        private final boolean[] speechSequence;
+
+        /**
+         * 默认第一帧说话、后续静音，用于 EOU 提交测试。
+         */
+        private SequencedVadEngine() {
+            this(true, false);
+        }
+
+        /**
+         * 按传入序列返回 VAD 结果，超出序列后保持最后一个值。
+         */
+        private SequencedVadEngine(boolean... speechSequence) {
+            this.speechSequence = speechSequence;
+        }
 
         @Override
         public VadDecision detect(String turnId, byte[] pcm) {
-            boolean speech = calls.getAndIncrement() == 0;
+            int index = calls.getAndIncrement();
+            boolean speech = speechSequence[Math.min(index, speechSequence.length - 1)];
             return new VadDecision(turnId, speech ? 0.9 : 0.2, speech, Instant.now());
         }
 
@@ -165,6 +226,38 @@ class VoicePipelineEouTest {
         @Override
         public AsrUpdate commitTurn(String turnId) {
             return AsrUpdate.finalUpdate(turnId, "我的邮箱是 kong");
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * 测试专用 ASR，记录第一次收到的 PCM，验证预滚窗口是否补送。
+     */
+    private static final class CapturingAsrAdapter implements StreamingAsrAdapter {
+        /**
+         * 保存第一次送入 ASR 的 PCM。
+         */
+        private final AtomicReference<byte[]> acceptedPcm;
+
+        /**
+         * 创建记录型 ASR。
+         */
+        private CapturingAsrAdapter(AtomicReference<byte[]> acceptedPcm) {
+            this.acceptedPcm = acceptedPcm;
+        }
+
+        @Override
+        public java.util.Optional<AsrUpdate> acceptAudio(String turnId, byte[] pcm) {
+            acceptedPcm.compareAndSet(null, pcm);
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public AsrUpdate commitTurn(String turnId) {
+            return AsrUpdate.finalUpdate(turnId, "ok");
         }
 
         @Override

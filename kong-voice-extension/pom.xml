@@ -18,10 +18,12 @@
 
     <modules>
         <module>kong-voice-extension-asr-openai</module>
+        <module>kong-voice-extension-asr-qwen</module>
         <module>kong-voice-extension-llm-openai</module>
         <module>kong-voice-extension-eou-livekit</module>
         <module>kong-voice-extension-vad-silero</module>
         <module>kong-voice-extension-tts-openai</module>
+        <module>kong-voice-extension-tts-qwen</module>
         <module>kong-voice-extension-transport-webrtc</module>
     </modules>
 </project>

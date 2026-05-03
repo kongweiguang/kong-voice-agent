@@ -15,8 +15,9 @@ Kong Voice Agent 是一个面向生产场景设计的 Java Voice Agent 后端框
 - Turn 隔离：所有异步结果通过雪花 ID 字符串 `turnId` 防止旧回复污染新对话
 - 通用 ID：`IdUtils` 支持不可预测 session id 和趋势递增的雪花 ID
 - VAD：优先加载 `models/silero_vad.onnx`，模型不可用时自动回退到 RMS fallback
-- ASR / LLM / TTS：应用默认组合 `kong-voice-extension-*` 提供的 OpenAI ASR / TTS 扩展与应用侧 LLM 实现，可通过 Spring Bean 替换；仓库内也提供可单独引入的 OpenAI LLM 扩展模块
-- HTTP / SSE / JSON：OpenAI ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS 和项目协议 JSON 工具统一使用 `kong-http` 提供的请求与 JSON 门面
+- ASR / LLM / TTS：应用默认组合 `kong-voice-extension-*` 提供的 Qwen ASR Realtime、Qwen TTS 扩展与应用侧 LLM 实现，可通过 Spring Bean 替换；仓库内也提供可单独引入的 OpenAI ASR、OpenAI LLM 和 OpenAI TTS 扩展模块
+- 链路指标：按 turn 输出 `turn_metrics`，可直接统计 ASR / LLM / TTS 响应时间、总耗时，以及“说完话到 LLM 首字 / TTS 首包”的时延
+- HTTP / Realtime / SSE / JSON：OpenAI ASR、Qwen ASR、应用侧 AgentScope LLM、OpenAI LLM 扩展、OpenAI TTS、Qwen TTS 和项目协议 JSON 工具统一复用 `kong-http` 与 DashScope Java SDK 提供的请求、实时 WebSocket 和 JSON 能力
 - 打断：支持客户端主动 `interrupt`，也支持 Agent 播报中用户重新说话触发打断
 - React UI：`ui/` 使用 React 19、TypeScript 5.9、Vite 7、React Router 7、Shadcn UI / Radix UI、Tailwind CSS 4、Lucide React 和 pnpm，提供豆包风格的产品化聊天界面、轻量会话侧栏、移动端覆盖式侧栏、底部固定输入、`WS PCM / WebRTC` 传输模式切换、发送/打断一体主按钮、连接、TTS 自动播放和文字区播报动效；每个前端会话拥有独立控制面 WebSocket，多个会话连接可同时存在，切换会话不会断开其他在线会话；会话列表和消息快照会写入浏览器 `localStorage`
 
@@ -118,7 +119,7 @@ http://localhost:5173/
 - `WS PCM`：页面会通过 `ws://localhost:9877/ws/agent?token=<login-token>` 为当前会话建立 WebSocket，并继续使用浏览器本地重采样后的 PCM16 二进制帧上传麦克风音频。
 - `WebRTC`：页面会先连接 `ws://localhost:9877/ws/agent?token=<login-token>`，随后在当前控制面 WebSocket 上发送 `rtc_start`、`rtc_offer` 和 `rtc_ice_candidate` 完成信令协商；麦克风音频改由 `RTCPeerConnection` 直传，TTS 通过远端 RTC 音轨回放；后端会额外通过 `rtc_state_changed` 暴露会话创建、远端音轨绑定、首包音频进入流水线、断流、失败和关闭等关键运行态。
 
-点击“新对话”会创建新的前端会话并为它打开新的后端 session，不会关闭其他仍在线的会话连接。React UI 会把会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 写入浏览器 `localStorage`，刷新页面后可回看本地历史；切换会话会恢复该会话的本地记录，并在连接仍在线时继续复用原 WebSocket 或 WebRTC 会话。控制面因刷新、断线或手动重连重新建立时，前端会优先带回本地保存的 `sessionId`，把同一对话重新绑定到原后端 session。顶部切换 `WS PCM / WebRTC` 时，会同步更新当前会话的传输模式、关闭旧的音频运行态，并在当前会话已经在线时按新模式自动重连，避免界面模式与真实连接不一致。`WS PCM` 模式下可点击输入框左侧麦克风按钮开始采集，停止录音时自动发送 `audio_end`；`WebRTC` 模式下浏览器会直接维护麦克风音轨，按钮只负责静音/恢复并在静音时发送一次 `audio_end`。如果 RTC 媒体面进入 `disconnected` 或 `failed`，前端会按退避策略自动尝试最多 3 次恢复当前会话的 RTC 链路；同时页面会根据后端 `rtc_state_changed` 实时刷新“连接错误 / 麦克风状态 / 播放状态”这些调试提示。收到回复后可查看流式 Agent 文本、自动播放 TTS 音频或远端 RTC 音轨、在助手文字区查看播报动效，或切换日间/夜间主题。
+点击“新对话”会创建新的前端会话并为它打开新的后端 session，不会关闭其他仍在线的会话连接。React UI 会把会话列表、当前选中会话、消息快照、`sessionId` 和最近 `turnId` 写入浏览器 `localStorage`，刷新页面后可回看本地历史；切换会话会恢复该会话的本地记录，并在连接仍在线时继续复用原 WebSocket 或 WebRTC 会话。控制面因刷新、断线或手动重连重新建立时，前端会优先带回本地保存的 `sessionId`，把同一对话重新绑定到原后端 session。顶部切换 `WS PCM / WebRTC` 时，会同步更新当前会话的传输模式、关闭旧的音频运行态，并在当前会话已经在线时按新模式自动重连，避免界面模式与真实连接不一致。`WS PCM` 模式下可点击输入框左侧麦克风按钮开始采集，停止录音时自动发送 `audio_end`；如果后端已经通过 `state_changed(USER_TURN_COMMITTED / AGENT_THINKING / AGENT_SPEAKING)` 判定当前轮语音完成，前端也会自动停止本地采集，避免继续上传已结束 turn 的音频。`WebRTC` 模式下浏览器会直接维护麦克风音轨，按钮只负责静音/恢复并在静音时发送一次 `audio_end`。如果 RTC 媒体面进入 `disconnected` 或 `failed`，前端会按退避策略自动尝试最多 3 次恢复当前会话的 RTC 链路；同时页面会根据后端 `rtc_state_changed` 实时刷新“连接错误 / 麦克风状态 / 播放状态”这些调试提示。收到回复后可查看流式 Agent 文本、自动播放 TTS 音频或远端 RTC 音轨、在助手文字区查看播报动效，或切换日间/夜间主题。
 
 React UI 默认读取：
 
@@ -194,9 +195,11 @@ socket.addEventListener("message", (event) => {
 - 位深与字节序：`16-bit PCM little-endian`
 - 推荐分片：`20ms`，约 `640 bytes`
 
-前端采集麦克风时，需要把浏览器 `AudioContext` 的 Float32 音频重采样到 16kHz，并转换为 PCM16 little-endian 后再发送。仓库内的 `ui/` React 界面已包含这条验证路径，可以作为前端接入参考。若切换到 WebRTC 模式，浏览器不再通过 WebSocket 手工上传 PCM，而是把麦克风音轨通过 `RTCPeerConnection` 发送给后端；控制面 `text`、`interrupt`、`ping`、`error`、`state_changed` 和 RTC signaling 全部复用现有 WebSocket 协议。
+前端采集麦克风时，需要把浏览器 `AudioContext` 的 Float32 音频重采样到 16kHz，并转换为 PCM16 little-endian 后再发送。仓库内的 `ui/` React 界面已包含这条验证路径，可以作为前端接入参考。后端会保留一小段开口前预滚音频，首个语音 turn 创建时会把预滚窗口一起送入 ASR，避免 VAD 确认说话的延迟截掉短句开头。若切换到 WebRTC 模式，浏览器不再通过 WebSocket 手工上传 PCM，而是把麦克风音轨通过 `RTCPeerConnection` 发送给后端；控制面 `text`、`interrupt`、`ping`、`error`、`state_changed` 和 RTC signaling 全部复用现有 WebSocket 协议。
 
-React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频。当前应用默认调用 OpenAI TTS 扩展，并把返回的音频字节作为 `tts_audio_chunk.payload.audioBase64` 下发；页面会优先尝试浏览器解码，如果后端替换为裸 PCM，页面才会按 PCM16 little-endian 和播放区采样率兜底播放。
+React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频。当前应用默认调用 Qwen TTS Realtime 扩展，并把 `response.audio.delta` 返回的 Base64 音频分片解码后作为 `tts_audio_chunk.payload.audioBase64` 下发；页面会优先尝试浏览器解码，如果后端返回裸 PCM，页面才会按 PCM16 little-endian 和播放区采样率兜底播放。
+
+服务端还会在每轮关键阶段下发 `turn_metrics`，字段口径以服务端真实边界为准：音频 turn 的 ASR 指标从首个音频块进入流水线开始计时，`speechEndToLlmFirstTokenMs` 和 `speechEndToTtsFirstChunkMs` 统一从当前轮 turn committed 边界计算。`ui/` 页面会把最近一次完成轮次的指标固定显示在聊天区顶部的面板里，并在 `tts_completed` 时保留一条系统摘要，便于联调时快速观察首字时延、首包时延和整体耗时。
 
 如果修改 `sample-rate`、`channels` 或 `upload-chunk-ms`，前端采集和重采样逻辑也要同步调整；当前服务端不会在 WebSocket 中做音频格式协商。
 
@@ -218,10 +221,13 @@ React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频
 ├── kong-voice-agent-core/          # 可复用语音流水线、WS 协议骨架、协议模型、扩展接口
 ├── kong-voice-extension/           # 扩展模块聚合
 │   ├── kong-voice-extension-asr-openai/  # OpenAI ASR 扩展
+│   ├── kong-voice-extension-asr-qwen/    # Qwen ASR 扩展
 │   ├── kong-voice-extension-llm-openai/  # OpenAI LLM 扩展（当前 app 默认未引入）
 │   ├── kong-voice-extension-eou-livekit/ # LiveKit 风格 EOU 扩展
 │   ├── kong-voice-extension-vad-silero/  # Silero VAD + ONNX Runtime 扩展
-│   └── kong-voice-extension-tts-openai/  # OpenAI TTS 扩展
+│   ├── kong-voice-extension-tts-openai/  # OpenAI TTS 扩展（当前 app 默认未引入）
+│   ├── kong-voice-extension-tts-qwen/    # Qwen TTS 扩展
+│   └── kong-voice-extension-transport-webrtc/ # WebRTC 传输扩展
 ├── kong-voice-agent-app/           # Spring Boot 启动入口、配置和应用侧装配
 ├── ui/                             # React 19 + Vite 7 + Tailwind CSS 4 对话界面
 ├── models/                         # 外置模型目录，默认查找 silero_vad.onnx
@@ -233,10 +239,12 @@ React UI 也会消费 `tts_audio_chunk.payload.audioBase64` 并播放 TTS 音频
 
 - `kong-voice-agent-core`：承载 Session、TurnManager、EOU 抽象、默认 WebSocket 处理器、协议模型、ASR / VAD / LLM / TTS 抽象和 `VoicePipelineHook`，协议 JSON 序列化入口复用 `kong-http` 的 JSON 门面。
 - `kong-voice-extension-asr-openai`：承载 OpenAI ASR 自动配置，默认实现使用 `kong-http` 调用 `/audio/transcriptions`。
+- `kong-voice-extension-asr-qwen`：承载 Qwen ASR Realtime 自动配置，显式启用后使用 DashScope Java SDK 连接百炼实时识别 WebSocket，把 PCM 分片以 Base64 追加到实时会话。
 - `kong-voice-extension-llm-openai`：承载 OpenAI LLM 自动配置，默认实现使用 `kong-http` SSE 调用 `/chat/completions` 输出文本 chunk；当前 app 默认未引入该模块。
 - `kong-voice-extension-eou-livekit`：承载默认 LiveKit MultilingualModel 风格 EOU 自动配置和 ONNX detector。
 - `kong-voice-extension-vad-silero`：承载默认 Silero VAD、`kong-voice-agent.vad.*` / `kong-voice-agent.onnx.*` 配置绑定和 ONNX Runtime 会话工厂。
-- `kong-voice-extension-tts-openai`：承载 OpenAI TTS 自动配置，默认实现使用 `kong-http` 调用 `/audio/speech`。
+- `kong-voice-extension-tts-openai`：承载 OpenAI TTS 自动配置，默认实现使用 `kong-http` 调用 `/audio/speech`；当前 app 默认未引入该模块。
+- `kong-voice-extension-tts-qwen`：承载 Qwen TTS Realtime 自动配置，默认实现使用 DashScope Java SDK 连接百炼实时语音合成 WebSocket，解析 `response.audio.delta` Base64 音频分片并回传给流水线。
 - `kong-voice-agent-app`：承载 Spring Boot 应用入口、`/ws/agent` 注册、运行配置、默认扩展组合和 LLM 实现；应用侧 AgentScope 模型传输通过 `KongHttpTransport` 适配到 `kong-http`。
 
 ## 配置入口
@@ -269,23 +277,32 @@ kong-voice-agent:
     sample-format: s16le
     upload-chunk-ms: 20
   asr:
-    openai:
-      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:}}
-      base-url: ${KONG_VOICE_AGENT_ASR_OPENAI_BASE_URL:https://api.openai.com/v1}
-      transcriptions-path: ${KONG_VOICE_AGENT_ASR_OPENAI_TRANSCRIPTIONS_PATH:/audio/transcriptions}
-      model: ${KONG_VOICE_AGENT_ASR_OPENAI_MODEL:gpt-4o-mini-transcribe}
-      language: ${KONG_VOICE_AGENT_ASR_OPENAI_LANGUAGE:zh}
-      timeout-ms: ${KONG_VOICE_AGENT_ASR_OPENAI_TIMEOUT_MS:15000}
+    qwen:
+      enabled: ${KONG_VOICE_AGENT_ASR_QWEN_ENABLED:true}
+      api-key: ${KONG_VOICE_AGENT_QWEN_API_KEY:${DASHSCOPE_API_KEY:}}
+      url: ${KONG_VOICE_AGENT_ASR_QWEN_URL:wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      model: ${KONG_VOICE_AGENT_ASR_QWEN_MODEL:qwen3-asr-flash-realtime}
+      language: ${KONG_VOICE_AGENT_ASR_QWEN_LANGUAGE:zh}
+      input-audio-format: ${KONG_VOICE_AGENT_ASR_QWEN_INPUT_AUDIO_FORMAT:pcm}
+      enable-turn-detection: ${KONG_VOICE_AGENT_ASR_QWEN_ENABLE_TURN_DETECTION:false}
+      turn-detection-type: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_TYPE:server_vad}
+      turn-detection-threshold: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_THRESHOLD:0.0}
+      turn-detection-silence-duration-ms: ${KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_SILENCE_DURATION_MS:400}
+      timeout-ms: ${KONG_VOICE_AGENT_ASR_QWEN_TIMEOUT_MS:30000}
   tts:
-    openai:
-      api-key: ${KONG_VOICE_AGENT_OPENAI_API_KEY:${OPENAI_API_KEY:}}
-      base-url: ${KONG_VOICE_AGENT_TTS_OPENAI_BASE_URL:https://api.openai.com/v1}
-      speech-path: ${KONG_VOICE_AGENT_TTS_OPENAI_SPEECH_PATH:/audio/speech}
-      model: ${KONG_VOICE_AGENT_TTS_OPENAI_MODEL:gpt-4o-mini-tts}
-      voice: ${KONG_VOICE_AGENT_TTS_OPENAI_VOICE:alloy}
-      response-format: ${KONG_VOICE_AGENT_TTS_OPENAI_RESPONSE_FORMAT:wav}
-      instructions: ${KONG_VOICE_AGENT_TTS_OPENAI_INSTRUCTIONS:}
-      timeout-ms: ${KONG_VOICE_AGENT_TTS_OPENAI_TIMEOUT_MS:30000}
+    qwen:
+      api-key: ${KONG_VOICE_AGENT_QWEN_API_KEY:${DASHSCOPE_API_KEY:}}
+      url: ${KONG_VOICE_AGENT_TTS_QWEN_URL:wss://dashscope.aliyuncs.com/api-ws/v1/realtime}
+      model: ${KONG_VOICE_AGENT_TTS_QWEN_MODEL:qwen3-tts-flash-realtime}
+      voice: ${KONG_VOICE_AGENT_TTS_QWEN_VOICE:Cherry}
+      language-type: ${KONG_VOICE_AGENT_TTS_QWEN_LANGUAGE_TYPE:Chinese}
+      mode: ${KONG_VOICE_AGENT_TTS_QWEN_MODE:server_commit}
+      response-format: ${KONG_VOICE_AGENT_TTS_QWEN_RESPONSE_FORMAT:PCM_24000HZ_MONO_16BIT}
+      format: ${KONG_VOICE_AGENT_TTS_QWEN_FORMAT:pcm}
+      sample-rate: ${KONG_VOICE_AGENT_TTS_QWEN_SAMPLE_RATE:24000}
+      instructions: ${KONG_VOICE_AGENT_TTS_QWEN_INSTRUCTIONS:}
+      optimize-instructions: ${KONG_VOICE_AGENT_TTS_QWEN_OPTIMIZE_INSTRUCTIONS:false}
+      timeout-ms: ${KONG_VOICE_AGENT_TTS_QWEN_TIMEOUT_MS:30000}
   vad:
     model-path: ${KONG_VOICE_AGENT_VAD_MODEL_PATH:file:models/silero_vad.onnx}
     speech-threshold: 0.6
@@ -377,55 +394,64 @@ KONG_VOICE_AGENT_EOU_MODEL_PATH=file:/absolute/path/to/model_quantized.onnx
 KONG_VOICE_AGENT_EOU_TOKENIZER_PATH=file:/absolute/path/to/tokenizer.json
 ```
 
-## OpenAI ASR / TTS 联调
+## Qwen ASR / Qwen TTS 联调
 
-默认扩展通过 `kong-http` 对接 OpenAI Audio API：
+默认扩展通过 DashScope Java SDK 和 `kong-http` 对接阿里云百炼 Qwen ASR Realtime / Qwen TTS：
 
-- ASR：在 `audio_end` 或端点提交时把累计 PCM 包装成 WAV，通过 `kong-http` multipart 请求 `/audio/transcriptions` 发起转写，默认模型为 `gpt-4o-mini-transcribe`。
-- TTS：按 turnId 累计 LLM 文本到句子边界或最后一个 chunk，再通过 `kong-http` JSON 请求 `/audio/speech` 获取二进制音频，默认模型为 `gpt-4o-mini-tts`，默认返回 `wav`。
+- ASR：每个语音 turn 建立一个 Qwen-ASR-Realtime 会话，按 PCM 分片调用 `appendAudio`，在 `audio_end` 或端点提交时等待最终转写，默认模型为 `qwen3-asr-flash-realtime`。
+- TTS：按 turnId 累计 LLM 文本到句子边界或最后一个 chunk，再通过 DashScope Java SDK 创建 Qwen TTS Realtime 会话；默认 `server_commit` 模式由服务端判断合成时机，收到 `response.audio.delta` 后立即把 Base64 音频分片转换为 `tts_audio_chunk`。
 
-启动前需要配置 OpenAI API Key：
+启动前需要配置百炼 API Key：
 
 ```bash
-export OPENAI_API_KEY=sk-xxxx
+export DASHSCOPE_API_KEY=sk-xxxx
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:OPENAI_API_KEY="sk-xxxx"
+$env:DASHSCOPE_API_KEY="sk-xxxx"
 ```
 
 也可以使用项目专用环境变量覆盖：
 
 ```bash
-export KONG_VOICE_AGENT_OPENAI_API_KEY=sk-xxxx
+export KONG_VOICE_AGENT_QWEN_API_KEY=sk-xxxx
 ```
 
-外部服务不可用、鉴权失败或返回空音频时会明确失败，不回退到假转写或假音频；TTS 下游失败会通过 WebSocket 下发 `error(code=tts_failed)`，当前连接不会因为 Reactor 回调异常而中断。默认 OpenAI TTS 已内置句子级文本积攒，未到句末的非末尾 LLM 片段不会立即合成，避免播放出现过短音频片段导致的不连贯。
+外部服务不可用、鉴权失败或返回空音频时会明确失败，不回退到假转写或假音频；TTS 下游失败会通过 WebSocket 下发 `error(code=tts_failed)`，当前连接不会因为 Reactor 回调异常而中断。默认 Qwen TTS 已内置句子级文本积攒，未到句末的非末尾 LLM 片段不会立即合成，避免播放出现过短音频片段导致的不连贯。
 
 常用配置项：
 
 | 配置项 | 默认值 | 环境变量 |
 | --- | --- | --- |
-| `kong-voice-agent.asr.openai.api-key` | 空 | `KONG_VOICE_AGENT_OPENAI_API_KEY` 或 `OPENAI_API_KEY` |
-| `kong-voice-agent.asr.openai.base-url` | `https://api.openai.com/v1` | `KONG_VOICE_AGENT_ASR_OPENAI_BASE_URL` |
-| `kong-voice-agent.asr.openai.transcriptions-path` | `/audio/transcriptions` | `KONG_VOICE_AGENT_ASR_OPENAI_TRANSCRIPTIONS_PATH` |
-| `kong-voice-agent.asr.openai.model` | `gpt-4o-mini-transcribe` | `KONG_VOICE_AGENT_ASR_OPENAI_MODEL` |
-| `kong-voice-agent.asr.openai.language` | `zh` | `KONG_VOICE_AGENT_ASR_OPENAI_LANGUAGE` |
-| `kong-voice-agent.asr.openai.timeout-ms` | `15000` | `KONG_VOICE_AGENT_ASR_OPENAI_TIMEOUT_MS` |
-| `kong-voice-agent.tts.openai.api-key` | 空 | `KONG_VOICE_AGENT_OPENAI_API_KEY` 或 `OPENAI_API_KEY` |
-| `kong-voice-agent.tts.openai.base-url` | `https://api.openai.com/v1` | `KONG_VOICE_AGENT_TTS_OPENAI_BASE_URL` |
-| `kong-voice-agent.tts.openai.speech-path` | `/audio/speech` | `KONG_VOICE_AGENT_TTS_OPENAI_SPEECH_PATH` |
-| `kong-voice-agent.tts.openai.model` | `gpt-4o-mini-tts` | `KONG_VOICE_AGENT_TTS_OPENAI_MODEL` |
-| `kong-voice-agent.tts.openai.voice` | `alloy` | `KONG_VOICE_AGENT_TTS_OPENAI_VOICE` |
-| `kong-voice-agent.tts.openai.response-format` | `wav` | `KONG_VOICE_AGENT_TTS_OPENAI_RESPONSE_FORMAT` |
-| `kong-voice-agent.tts.openai.instructions` | 空 | `KONG_VOICE_AGENT_TTS_OPENAI_INSTRUCTIONS` |
-| `kong-voice-agent.tts.openai.timeout-ms` | `30000` | `KONG_VOICE_AGENT_TTS_OPENAI_TIMEOUT_MS` |
+| `kong-voice-agent.asr.qwen.enabled` | `true` | `KONG_VOICE_AGENT_ASR_QWEN_ENABLED` |
+| `kong-voice-agent.asr.qwen.api-key` | 空 | `KONG_VOICE_AGENT_QWEN_API_KEY` 或 `DASHSCOPE_API_KEY` |
+| `kong-voice-agent.asr.qwen.url` | `wss://dashscope.aliyuncs.com/api-ws/v1/realtime` | `KONG_VOICE_AGENT_ASR_QWEN_URL` |
+| `kong-voice-agent.asr.qwen.model` | `qwen3-asr-flash-realtime` | `KONG_VOICE_AGENT_ASR_QWEN_MODEL` |
+| `kong-voice-agent.asr.qwen.language` | `zh` | `KONG_VOICE_AGENT_ASR_QWEN_LANGUAGE` |
+| `kong-voice-agent.asr.qwen.input-audio-format` | `pcm` | `KONG_VOICE_AGENT_ASR_QWEN_INPUT_AUDIO_FORMAT` |
+| `kong-voice-agent.asr.qwen.enable-turn-detection` | `false` | `KONG_VOICE_AGENT_ASR_QWEN_ENABLE_TURN_DETECTION` |
+| `kong-voice-agent.asr.qwen.turn-detection-type` | `server_vad` | `KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_TYPE` |
+| `kong-voice-agent.asr.qwen.turn-detection-threshold` | `0.0` | `KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_THRESHOLD` |
+| `kong-voice-agent.asr.qwen.turn-detection-silence-duration-ms` | `400` | `KONG_VOICE_AGENT_ASR_QWEN_TURN_DETECTION_SILENCE_DURATION_MS` |
+| `kong-voice-agent.asr.qwen.timeout-ms` | `30000` | `KONG_VOICE_AGENT_ASR_QWEN_TIMEOUT_MS` |
+| `kong-voice-agent.tts.qwen.api-key` | 空 | `KONG_VOICE_AGENT_QWEN_API_KEY` 或 `DASHSCOPE_API_KEY` |
+| `kong-voice-agent.tts.qwen.url` | `wss://dashscope.aliyuncs.com/api-ws/v1/realtime` | `KONG_VOICE_AGENT_TTS_QWEN_URL` |
+| `kong-voice-agent.tts.qwen.model` | `qwen3-tts-flash-realtime` | `KONG_VOICE_AGENT_TTS_QWEN_MODEL` |
+| `kong-voice-agent.tts.qwen.voice` | `Cherry` | `KONG_VOICE_AGENT_TTS_QWEN_VOICE` |
+| `kong-voice-agent.tts.qwen.language-type` | `Chinese` | `KONG_VOICE_AGENT_TTS_QWEN_LANGUAGE_TYPE` |
+| `kong-voice-agent.tts.qwen.mode` | `server_commit` | `KONG_VOICE_AGENT_TTS_QWEN_MODE` |
+| `kong-voice-agent.tts.qwen.response-format` | `PCM_24000HZ_MONO_16BIT` | `KONG_VOICE_AGENT_TTS_QWEN_RESPONSE_FORMAT` |
+| `kong-voice-agent.tts.qwen.format` | `pcm` | `KONG_VOICE_AGENT_TTS_QWEN_FORMAT` |
+| `kong-voice-agent.tts.qwen.sample-rate` | `24000` | `KONG_VOICE_AGENT_TTS_QWEN_SAMPLE_RATE` |
+| `kong-voice-agent.tts.qwen.instructions` | 空 | `KONG_VOICE_AGENT_TTS_QWEN_INSTRUCTIONS` |
+| `kong-voice-agent.tts.qwen.optimize-instructions` | `false` | `KONG_VOICE_AGENT_TTS_QWEN_OPTIMIZE_INSTRUCTIONS` |
+| `kong-voice-agent.tts.qwen.timeout-ms` | `30000` | `KONG_VOICE_AGENT_TTS_QWEN_TIMEOUT_MS` |
 
 ## 替换真实服务
 
-当前默认 ASR 由 `kong-voice-extension-asr-openai` 提供，默认 VAD 由 `kong-voice-extension-vad-silero` 提供，默认 EOU 由 `kong-voice-extension-eou-livekit` 提供，默认 TTS 由 `kong-voice-extension-tts-openai` 提供，LLM 使用应用侧默认实现。`/ws/agent` 及其内置 `ping` / `interrupt` / `audio_end` / `text` 消息处理继续由 `kong-voice-agent-core` 默认提供。后续接入其他生产服务时，优先通过 Spring Bean 覆盖这些接口：
+当前默认 ASR 由 `kong-voice-extension-asr-qwen` 提供，默认 VAD 由 `kong-voice-extension-vad-silero` 提供，默认 EOU 由 `kong-voice-extension-eou-livekit` 提供，默认 TTS 由 `kong-voice-extension-tts-qwen` 提供，LLM 使用应用侧默认实现。`/ws/agent` 及其内置 `ping` / `interrupt` / `audio_end` / `text` 消息处理继续由 `kong-voice-agent-core` 默认提供。后续接入其他生产服务时，优先通过 Spring Bean 覆盖这些接口：
 
 - `StreamingAsrAdapterFactory`：为每个 session 创建独立的流式 ASR 实例
 - `EouDetector`：替换整体 EOU 判断逻辑，可接入自研模型、云端 EOU 服务或规则引擎
@@ -435,6 +461,22 @@ export KONG_VOICE_AGENT_OPENAI_API_KEY=sk-xxxx
 - `VoicePipelineHook`：观察音频、文本、turn commit、LLM、TTS 和打断节点，适合做日志、审计、埋点和业务上下文记录
 
 如果业务模块希望直接复用 OpenAI 兼容的 LLM 实现，可以额外引入 `kong-voice-extension-llm-openai`，并通过 `kong-voice-agent.llm.openai.*` 配置 `api-key`、`base-url`、`chat-completions-path`、`model`、`system-prompt`、`temperature` 和 `timeout-ms`。
+
+如果业务模块希望单独复用阿里百炼 Qwen ASR Realtime，可以引入 `kong-voice-extension-asr-qwen` 并设置：
+
+```xml
+<dependency>
+    <groupId>io.github.kongweiguang</groupId>
+    <artifactId>kong-voice-extension-asr-qwen</artifactId>
+</dependency>
+```
+
+```bash
+KONG_VOICE_AGENT_ASR_QWEN_ENABLED=true
+KONG_VOICE_AGENT_QWEN_API_KEY=sk-xxxx
+```
+
+Qwen ASR Realtime 扩展会为每个语音 turn 建立一个 DashScope SDK 实时会话，`acceptAudio` 将 PCM 分片 Base64 后调用 `appendAudio`，`commitTurn` 在默认 manual 模式下调用 `commit()` 和 `endSession()` 等待最终稿。DashScope Java SDK 2.22.17 的 `OmniRealtimeConfig` 默认会带上 `server_vad`，因此项目在 `enable-turn-detection=false` 时会显式把 `turn_detection` 下发为 `null`，避免上游过早自动断句。DashScope 在最终稿发出后如果再回一个 `connection.closed(code=1000)`，实现会按正常收尾处理；如果 completed 事件文本为空但此前已有 partial，会用最近 partial 兜底；如果 SDK 随后在清理阶段抛出 `conversation is already closed!`，也会被视为幂等关闭，不会覆盖已经拿到的最终转写，也不会阻断后续 `asr_final`、LLM 和 TTS。项目本地已有 VAD / EOU；如需让百炼服务端 VAD 参与断句，可改为 `true`。
 
 应用默认 LLM 提示会要求模型使用用户输入语言回答；用户用中文提问时，应返回自然中文。若替换模型后仍出现中文问题英文回答，优先检查模型能力、对话模板和 `ai.model.model-name` 指向的实际模型。
 
@@ -499,15 +541,19 @@ mvn -pl "kong-voice-extension/kong-voice-extension-eou-livekit" "-Dkong.voice-ag
 
 ### 启动时提示找不到 `models/silero_vad.onnx`
 
-这是可接受的。当前配置允许模型缺失时回退到 RMS fallback；ASR 和 TTS 默认依赖 OpenAI Audio API，需要先配置 `OPENAI_API_KEY` 或 `KONG_VOICE_AGENT_OPENAI_API_KEY`。
+这是可接受的。当前配置允许模型缺失时回退到 RMS fallback；ASR 和 TTS 默认依赖百炼服务，需要先配置 `DASHSCOPE_API_KEY` 或 `KONG_VOICE_AGENT_QWEN_API_KEY`。
 
-### 收到 `OpenAI API Key 未配置`
+### 收到 `Qwen ASR API Key 未配置`
 
-先确认运行应用的同一个终端或进程环境里已经设置 `OPENAI_API_KEY`，也可以设置 `KONG_VOICE_AGENT_OPENAI_API_KEY`。如果使用 IDE 启动，需要把环境变量加到 Run Configuration 中。
+先确认运行应用的同一个终端或进程环境里已经设置 `DASHSCOPE_API_KEY`，也可以设置 `KONG_VOICE_AGENT_QWEN_API_KEY`。如果使用 IDE 启动，需要把环境变量加到 Run Configuration 中。
 
-### 收到 `OpenAI TTS 返回了空音频`
+### 收到 `Qwen TTS API Key 未配置`
 
-先确认 API Key 有效、模型名称和音色名称可用，并检查网络能访问 `https://api.openai.com`。如果接口返回了空字节流，后端会下发 `error(code=tts_failed)`，前端应展示错误并停止当前 turn 的播放队列。
+先确认运行应用的同一个终端或进程环境里已经设置 `DASHSCOPE_API_KEY`，也可以设置 `KONG_VOICE_AGENT_QWEN_API_KEY`。如果使用 IDE 启动，需要把环境变量加到 Run Configuration 中。
+
+### 收到 `Qwen TTS 返回了空音频`
+
+先确认 API Key 有效、模型名称和音色名称可用，并检查网络能访问 `https://dashscope.aliyuncs.com`。如果接口返回了空字节流，后端会下发 `error(code=tts_failed)`，前端应展示错误并停止当前 turn 的播放队列。
 
 ### 连接不上 WebSocket
 

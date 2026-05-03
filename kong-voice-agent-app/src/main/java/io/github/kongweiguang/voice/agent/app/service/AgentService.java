@@ -10,6 +10,7 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.OpenAIChatModel;
+import io.agentscope.core.model.transport.OkHttpTransport;
 import io.agentscope.core.session.InMemorySession;
 import io.agentscope.core.session.Session;
 import io.github.kongweiguang.v1.json.Json;
@@ -101,10 +102,10 @@ public class AgentService {
                 .apiKey(apiKey)
                 .modelName(modelName)
                 .baseUrl(baseUrl)
-                .httpTransport(new KongHttpTransport())
+                .httpTransport(OkHttpTransport.builder().build())
                 .formatter(new OpenAIChatFormatter())
                 .generateOptions(
-                        GenerateOptions.builder().additionalBodyParam("chat_template_kwargs", Map.of("enable_thinking", true)).build()
+                        GenerateOptions.builder().additionalBodyParam("chat_template_kwargs", Map.of("enable_thinking", true)).additionalBodyParam("enable_thinking", false).build()
                 )
                 .build();
     }

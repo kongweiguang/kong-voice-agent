@@ -4,6 +4,7 @@ import io.github.kongweiguang.voice.agent.service.VoicePipelineService;
 import io.github.kongweiguang.voice.agent.ws.WsMessageType;
 import io.github.kongweiguang.voice.agent.ws.WsTextMessageContext;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
  * @author kongweiguang
  */
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class AudioEndWsTextMessageHandler implements WsTextMessageHandler {
     /**
@@ -33,6 +35,8 @@ public class AudioEndWsTextMessageHandler implements WsTextMessageHandler {
     @Override
     public void handle(WsTextMessageContext context) {
         // audio_end 是客户端声明本轮音频结束的控制帧，流水线会立即尝试提交 ASR final。
+        log.info("Handle audio_end: ws={}, sessionId={}, turnId={}",
+                context.webSocketSession().getId(), context.sessionState().sessionId(), context.sessionState().currentTurnId());
         pipelineService.commitAudioEnd(context.sessionState(), context.webSocketSession());
     }
 }
